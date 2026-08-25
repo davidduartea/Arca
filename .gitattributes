@@ -1,0 +1,25 @@
+# Finales de línea.
+#
+# Git en Windows convierte LF a CRLF al sacar los archivos, y para casi todo da
+# igual. Para un script que se ejecuta dentro de un contenedor Linux, no: el
+# intérprete lee la primera línea como `#!/bin/sh\r`, busca un binario llamado
+# `sh\r` y no lo encuentra. El contenedor muere con
+#
+#   exec /usr/local/bin/entrypoint.sh: no such file or directory
+#
+# que es de los mensajes más engañosos que existen — el archivo está ahí y el
+# error dice que no. Marcar `eol=lf` obliga a Git a dejarlos como están en
+# cualquier sistema.
+
+*.sh              text eol=lf
+Dockerfile        text eol=lf
+*.Dockerfile      text eol=lf
+docker-compose.yml text eol=lf
+.dockerignore     text eol=lf
+
+# Binarios, para que Git no intente normalizar nada dentro.
+*.png binary
+*.jpg binary
+*.webp binary
+*.ico binary
+*.woff2 binary

@@ -1,0 +1,109 @@
+// Esquema del libro contable.
+//
+// Tres tablas y una idea: **el saldo no se guarda en ninguna parte**. Se deriva
+// sumando los asientos de la cuenta. Un campo `balance` es un dato duplicado, y
+// un dato duplicado acaba desincronizado — con dinero, eso significa que el
+// banco y el cliente no están de acuerdo en cuánto hay.
+//
+// Las tablas y columnas van en snake_case vía @map porque es la convención de
+// Postgres, mientras que el cliente de TypeScript las ve en camelCase.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// En Prisma 7 la URL ya no vive aquí: se movió a `prisma.config.ts`. El
+// esquema sólo declara con qué motor habla.
+// 📖 https://www.prisma.io/docs/guides/upgrade-prisma-orm/v7
+datasource db {
+  provider = "postgresql"
+}
+
+model Account {
+  id      String @id @default(uuid()) @db.Uuid
+  ownerId String @db.Uuid @map("owner_id")
+
+  /// Lo que ve quien la usa: «Cuenta corriente», «Ahorro».
+  name String
+
+  /// Distingue las cuentas de personas de las del propio sistema.
+  ///
+  /// Un ingreso desde fuera tiene que salir de algún sitio, o la transacción
+  /// no cuadraría a cero. Sale de una cuenta de sistema — el equivalente
+  /// contable de «el mundo exterior» — que sí puede quedar en negativo.
+  kind AccountKind @default(USER)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  entries Entry[]
+
+  @@index([ownerId])
+  @@map("accounts")
+}
+
+enum AccountKind {
+  USER
+  SYSTEM
+
+  @@map("account_kind")
+}
+
+/// Un movimiento completo. Agrupa los asientos que se guardan juntos o no se
+/// guardan: una transferencia son dos asientos dentro de UNA transacción.
+model Transaction {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// La clave que manda el cliente para poder reintentar sin duplicar.
+  ///
+  /// Es única y anulable: única para que dos peticiones con la misma clave no
+  /// puedan crear dos transacciones, y anulable porque los movimientos
+  /// internos del sistema no vienen de una petición que pueda repetirse.
+  idempotencyKey String? @unique @map("idempotency_key")
+
+  description String
+
+  /// Qué transacción corrige ésta, si es una corrección.
+  ///
+  /// Los asientos son inmutables: un error no se borra ni se edita, se anula
+  /// con otra transacción que invierte los importes. Así el histórico cuenta
+  /// lo que pasó de verdad, incluido el error.
+  reversesId String?      @unique @map("reverses_id") @db.Uuid
+  reverses   Transaction? @relation("Reversal", fields: [reversesId], references: [id])
+  reversedBy Transaction? @relation("Reversal")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  entries Entry[]
+
+  @@index([createdAt])
+  @@map("transactions")
+}
+
+/// Una línea del libro: cuánto se movió en qué cuenta.
+///
+/// El importe va en **céntimos, como entero**. Nunca un decimal: `0.1 + 0.2`
+/// no es `0.3` en coma flotante, y en dinero esa diferencia se acumula hasta
+/// que los libros dejan de cuadrar.
+///
+/// El signo lleva la dirección: negativo sale, positivo entra. Los asientos de
+/// una misma transacción **suman cero**, y eso lo garantiza la base de datos —
+/// ver la migración que instala el trigger diferido.
+model Entry {
+  id String @id @default(uuid()) @db.Uuid
+
+  transactionId String      @map("transaction_id") @db.Uuid
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+
+  accountId String  @map("account_id") @db.Uuid
+  account   Account @relation(fields: [accountId], references: [id])
+
+  amount BigInt
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // El índice compuesto es el que sirve al extracto y al cálculo de saldo:
+  // las dos consultas filtran por cuenta y ordenan por fecha.
+  @@index([accountId, createdAt])
+  @@index([transactionId])
+  @@map("entries")
+}

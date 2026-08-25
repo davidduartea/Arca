@@ -1,0 +1,21 @@
+# Qué no debe tocar `pnpm format`.
+#
+# `prettier --write .` recorre el repositorio entero. Sin esta lista reformatea
+# archivos que no son suyos — y el caso grave es `pnpm-lock.yaml`: prettier le
+# cambia las comillas simples por dobles, lo que produce un diff de miles de
+# líneas, deja de coincidir con lo que escribe pnpm, y `--frozen-lockfile` en CI
+# empieza a comparar contra un archivo que ninguna herramienta genera así.
+
+# Generado por pnpm. Su formato lo decide pnpm, no prettier.
+pnpm-lock.yaml
+
+# Salida de compilación y artefactos.
+**/dist/
+**/.next/
+**/node_modules/
+**/coverage/
+e2e/playwright-report/
+e2e/test-results/
+
+# Generado por Prisma.
+apps/api/src/generated/

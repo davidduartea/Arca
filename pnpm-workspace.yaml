@@ -1,0 +1,34 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# ─── Política de cadena de suministro ────────────────────────────────────────
+# Deny-by-default: pnpm no ejecuta scripts de instalación salvo que se marquen
+# aquí explícitamente. Un paquete comprometido normalmente entrega su payload
+# desde un postinstall, así que negarlos por defecto cierra esa vía.
+allowBuilds:
+  # Descarga los binarios del query engine, específicos de cada plataforma y
+  # por eso imposibles de meter en el tarball. Es la única excepción real.
+  "@prisma/engines": true
+
+  # Su postinstall sólo ejecuta `prisma generate`, que corremos nosotros desde
+  # `db:generate`. Así la generación es un paso visible del pipeline y no un
+  # efecto secundario silencioso de `pnpm install`.
+  "@prisma/client": false
+  prisma: false
+
+  "@swc/core": false
+  esbuild: false
+
+# La instalación FALLA (no sólo avisa) si aparece una dependencia con scripts
+# sin revisar. Convierte el CI en un bloqueo automático ante un paquete nuevo.
+strictDepBuilds: true
+
+# Rechaza versiones publicadas hace menos de 24 h. La mayoría de los paquetes
+# comprometidos se retiran del registro en horas; esta ventana los evita.
+minimumReleaseAge: 1440
+
+overrides:
+  # GHSA-ggr8-5vv4-36mx (high): agotamiento de pila al fusionar grafos
+  # recursivos. Llega por @prisma/config, así que subir Prisma no lo arregla.
+  deepmerge-ts: ^8.0.0

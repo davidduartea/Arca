@@ -1,0 +1,32 @@
+###############################################################################
+# Sólo Postgres, que es lo que el desarrollo necesita.
+#
+#   pnpm db:up     → levanta la base
+#   pnpm db:down   → la para
+###############################################################################
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: arca-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: arca
+      POSTGRES_PASSWORD: arca
+      POSTGRES_DB: arca
+    ports:
+      # Sólo en la interfaz local. Sin el prefijo, Docker publica el puerto en
+      # todas las interfaces de red de la máquina: en una wifi compartida
+      # cualquiera podría conectarse probando la credencial por defecto, que
+      # está a la vista en este mismo archivo.
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - arca-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arca -d arca"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  arca-pgdata:
