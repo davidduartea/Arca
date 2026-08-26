@@ -305,6 +305,51 @@ describe("LedgerService", () => {
     });
   });
 
+  /**
+   * Escribir dentro de una transacción que abrió otro.
+   *
+   * Es lo que necesita una transferencia para bloquear las cuentas y escribir
+   * los asientos sin soltar el bloqueo en medio.
+   */
+  describe("postWithin", () => {
+    it("escribe dentro de una transacción ajena", async () => {
+      await prisma.$transaction((tx) => ledger.postWithin(tx, transferencia(5_000n)));
+
+      expect(await ledger.balanceOf(destino)).toBe(5_000n);
+    });
+
+    it("permite dos movimientos en la misma transacción", async () => {
+      // `SET CONSTRAINTS ALL IMMEDIATE` dura hasta el final de la transacción.
+      // Si no se devolviera a diferido, el segundo movimiento fallaría al
+      // insertar su primer asiento, cuando la suma todavía no es cero.
+      await prisma.$transaction(async (tx) => {
+        await ledger.postWithin(tx, transferencia(5_000n));
+        await ledger.postWithin(tx, transferencia(2_500n));
+      });
+
+      expect(await ledger.balanceOf(destino)).toBe(7_500n);
+      expect(await prisma.transaction.count()).toBe(2);
+    });
+
+    it("si el segundo movimiento falla no queda ni el primero", async () => {
+      await expect(
+        prisma.$transaction(async (tx) => {
+          await ledger.postWithin(tx, transferencia(5_000n));
+          await ledger.postWithin(tx, {
+            description: "Descuadre",
+            entries: [
+              { accountId: origen, amount: -5_000n },
+              { accountId: destino, amount: 3_000n },
+            ],
+          });
+        }),
+      ).rejects.toThrow(UnbalancedTransactionError);
+
+      expect(await prisma.transaction.count()).toBe(0);
+      expect(await prisma.entry.count()).toBe(0);
+    });
+  });
+
   describe("byId", () => {
     it("devuelve la transacción con sus asientos", async () => {
       const movimiento = await ledger.post(transferencia(5_000n));
