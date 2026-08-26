@@ -19,9 +19,33 @@ datasource db {
   provider = "postgresql"
 }
 
+/// Quien abre cuentas y mueve dinero.
+model User {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Se guarda siempre en minúsculas: `Ana@x.com` y `ana@x.com` son la misma
+  /// persona, y sin normalizar el índice único dejaría registrarse dos veces.
+  email String @unique
+
+  /// El resultado de scrypt con su sal y sus parámetros dentro. Nunca la
+  /// contraseña, ni algo de lo que se pueda sacar.
+  passwordHash String @map("password_hash")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  accounts Account[]
+
+  @@map("users")
+}
+
 model Account {
-  id      String @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
+
+  /// De quién es la cuenta. Con clave foránea de verdad: hasta ahora era un
+  /// uuid suelto que no apuntaba a nada, y una cuenta sin dueño que exista no
+  /// es una cuenta, es un agujero.
   ownerId String @db.Uuid @map("owner_id")
+  owner   User   @relation(fields: [ownerId], references: [id])
 
   /// Lo que ve quien la usa: «Cuenta corriente», «Ahorro».
   name String

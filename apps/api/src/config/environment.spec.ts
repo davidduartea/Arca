@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { loadEnvironment } from "./environment";
 
-const MINIMO = { DATABASE_URL: "postgresql://arca:arca@localhost:5433/arca" };
+const MINIMO = {
+  DATABASE_URL: "postgresql://arca:arca@localhost:5433/arca",
+  JWT_SECRET: "un-secreto-suficientemente-largo-para-firmar",
+};
 
 describe("loadEnvironment", () => {
   it("rellena lo que no es obligatorio", () => {
@@ -10,6 +13,17 @@ describe("loadEnvironment", () => {
 
     expect(env.NODE_ENV).toBe("development");
     expect(env.PORT).toBe(3000);
+
+    // Cero es lo seguro: sin proxy delante, la IP que ve Express es la de
+    // verdad. Confiar en proxies que no existen deja falsificarla.
+    expect(env.TRUST_PROXY_HOPS).toBe(0);
+  });
+
+  it("no acepta un secreto de firma corto", () => {
+    // Un secreto corto se rompe a fuerza bruta sin tocar el servidor: el
+    // atacante ya tiene un token firmado con el que comparar.
+    expect(() => loadEnvironment({ ...MINIMO, JWT_SECRET: "corto" })).toThrow(/JWT_SECRET/);
+    expect(() => loadEnvironment({ DATABASE_URL: MINIMO.DATABASE_URL })).toThrow(/JWT_SECRET/);
   });
 
   it("convierte el puerto, que llega como texto", () => {

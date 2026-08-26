@@ -7,7 +7,7 @@ import { AccountsService } from "../accounts/accounts.service";
 import { UnknownAccountError } from "../ledger/ledger.errors";
 import { LedgerService } from "../ledger/ledger.service";
 import { PrismaService } from "../prisma/prisma.service";
-import { createTestingModule, truncateAll } from "../test/database";
+import { createOwner, createTestingModule, truncateAll } from "../test/database";
 import { InvalidCursorError, InvalidPageSizeError } from "./statements.errors";
 import { StatementsService } from "./statements.service";
 import type { StatementLine } from "./statements.types";
@@ -37,8 +37,10 @@ describe("StatementsService", () => {
   beforeEach(async () => {
     await truncateAll(prisma);
 
-    mundo = (await accounts.open({ ownerId: randomUUID(), name: "Mundo", kind: "SYSTEM" })).id;
-    ana = (await accounts.open({ ownerId: randomUUID(), name: "Ana" })).id;
+    mundo = (
+      await accounts.open({ ownerId: await createOwner(prisma), name: "Mundo", kind: "SYSTEM" })
+    ).id;
+    ana = (await accounts.open({ ownerId: await createOwner(prisma), name: "Ana" })).id;
   });
 
   const ingresar = (centavos: bigint, description = `Ingreso de ${centavos}`) =>

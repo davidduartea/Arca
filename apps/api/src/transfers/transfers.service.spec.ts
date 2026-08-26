@@ -7,7 +7,7 @@ import { AccountsService } from "../accounts/accounts.service";
 import { IdempotencyKeyReusedError, UnknownAccountError } from "../ledger/ledger.errors";
 import { LedgerService } from "../ledger/ledger.service";
 import { PrismaService } from "../prisma/prisma.service";
-import { createTestingModule, truncateAll } from "../test/database";
+import { createOwner, createTestingModule, truncateAll } from "../test/database";
 import {
   InsufficientFundsError,
   NonPositiveAmountError,
@@ -42,11 +42,11 @@ describe("TransfersService", () => {
   beforeEach(async () => {
     await truncateAll(prisma);
 
-    const banco = randomUUID();
+    const banco = await createOwner(prisma);
     mundo = (await accounts.open({ ownerId: banco, name: "Mundo exterior", kind: "SYSTEM" }))
       .id;
-    ana = (await accounts.open({ ownerId: randomUUID(), name: "Ana" })).id;
-    luis = (await accounts.open({ ownerId: randomUUID(), name: "Luis" })).id;
+    ana = (await accounts.open({ ownerId: await createOwner(prisma), name: "Ana" })).id;
+    luis = (await accounts.open({ ownerId: await createOwner(prisma), name: "Luis" })).id;
   });
 
   /** Un ingreso es una transferencia desde el mundo exterior. */

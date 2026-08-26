@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { AccountsService } from "../accounts/accounts.service";
 import { PG_CHECK_VIOLATION, readPostgresFailure } from "../prisma/postgres-errors";
 import { PrismaService } from "../prisma/prisma.service";
-import { createTestingModule, truncateAll } from "../test/database";
+import { createOwner, createTestingModule, truncateAll } from "../test/database";
 import {
   AlreadyReversedError,
   IdempotencyKeyReusedError,
@@ -50,7 +50,7 @@ describe("LedgerService", () => {
   beforeEach(async () => {
     await truncateAll(prisma);
 
-    const dueno = randomUUID();
+    const dueno = await createOwner(prisma);
     origen = (await accounts.open({ ownerId: dueno, name: "Origen" })).id;
     destino = (await accounts.open({ ownerId: dueno, name: "Destino" })).id;
   });
@@ -81,7 +81,9 @@ describe("LedgerService", () => {
     });
 
     it("acepta transacciones de más de dos asientos", async () => {
-      const tercera = (await accounts.open({ ownerId: randomUUID(), name: "Comisión" })).id;
+      const tercera = (
+        await accounts.open({ ownerId: await createOwner(prisma), name: "Comisión" })
+      ).id;
 
       const movimiento = await ledger.post({
         description: "Transferencia con comisión",

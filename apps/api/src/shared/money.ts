@@ -16,3 +16,18 @@ export function formatUsd(centavos: bigint): string {
 
   return `${negativo ? "-" : ""}$${dolares}.${resto.toString().padStart(2, "0")}`;
 }
+
+/**
+ * Los importes cruzan el cable como **texto**, nunca como número JSON.
+ *
+ * Un número en JSON es un `double` de IEEE 754. En cuanto un importe supera los
+ * 2^53 centavos, `JSON.parse` lo redondea en silencio — el mismo problema de
+ * precisión que el proyecto evita guardando enteros volvería a entrar por la
+ * puerta de la API, y sin que nadie se entere.
+ *
+ * Con texto, quien recibe decide: `BigInt(valor)` si va a operar, o mostrarlo
+ * tal cual. Lo que no puede es perderlo por el camino.
+ */
+export function toWire(centavos: bigint): string {
+  return centavos.toString();
+}

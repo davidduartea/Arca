@@ -12,6 +12,25 @@ const schema = z.object({
 
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
 
+  /**
+   * Con qué se firman los tokens.
+   *
+   * Largo de verdad: un secreto corto se rompe a fuerza bruta sin necesidad de
+   * tocar el servidor, porque el atacante ya tiene el token firmado.
+   */
+  JWT_SECRET: z.string().min(32, "hacen falta al menos 32 caracteres"),
+
+  /**
+   * Cuántos proxies hay delante en los que se puede confiar.
+   *
+   * Por defecto **cero**, que es lo seguro: sin proxy, la IP que ve Express es
+   * la de verdad. Poner un número mayor sin tener esos proxies delante deja que
+   * cualquiera falsifique su IP con una cabecera `X-Forwarded-For` y esquive
+   * la limitación de intentos; dejarlo a cero teniéndolos hace que todo el
+   * mundo comparta la IP del proxy y se limiten unos a otros.
+   */
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
+
   DATABASE_URL: z
     .string()
     .min(1, "hace falta la cadena de conexión")
