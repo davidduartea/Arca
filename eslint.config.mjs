@@ -50,7 +50,7 @@ export default tseslint.config(
     // Los archivos de configuración quedan fuera del tsconfig de cada paquete
     // — ese sólo incluye `src/` — así que el servicio de proyecto no los ve y
     // las reglas con tipos no pueden analizarlos. Se comprueban sin tipos.
-    files: ["**/*.config.ts", "**/*.config.mjs"],
+    files: ["**/*.config.ts", "**/*.config.mts", "**/*.config.mjs"],
     ...tseslint.configs.disableTypeChecked,
   },
 

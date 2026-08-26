@@ -15,18 +15,30 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["src/**/*.spec.ts"],
+
+    // Los tests hablan con un Postgres de verdad. El arranque global crea la
+    // base de pruebas y le aplica las migraciones antes de que corra nada.
+    globalSetup: ["src/test/global-setup.ts"],
+
+    // Un solo archivo a la vez: todos comparten la misma base y cada uno la
+    // vacía entre tests. En paralelo se pisarían.
+    fileParallelism: false,
+
+    // Arrancar Nest y migrar tarda más que los 5 s por defecto.
+    testTimeout: 20_000,
+    hookTimeout: 60_000,
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],
       include: ["src/**/*.ts"],
-      exclude: ["src/**/*.spec.ts", "src/main.ts", "src/**/*.module.ts"],
+      exclude: ["src/**/*.spec.ts", "src/test/**", "src/main.ts", "src/**/*.module.ts"],
       // Umbrales que rompen el build. Empiezan bajos a propósito y suben
       // conforme crece la suite: un umbral inalcanzable se termina borrando.
       thresholds: {
-        lines: 60,
-        functions: 60,
-        branches: 50,
-        statements: 60,
+        lines: 85,
+        functions: 90,
+        branches: 75,
+        statements: 85,
       },
     },
   },
