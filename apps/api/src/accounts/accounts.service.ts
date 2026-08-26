@@ -1,8 +1,9 @@
 import { Injectable } from "@nestjs/common";
 
+import { NotYourAccountError } from "../auth/auth.errors";
+import { UnknownAccountError } from "../ledger/ledger.errors";
 import { PrismaService } from "../prisma/prisma.service";
 import { isUuid } from "../shared/uuid";
-import { AccountNotFoundError } from "./accounts.errors";
 import type { Account, AccountDraft } from "./accounts.types";
 
 /** Forma mínima de lo que devuelve Prisma; evita atarse a sus tipos generados. */
@@ -43,10 +44,18 @@ export class AccountsService {
     return fila ? toAccount(fila) : null;
   }
 
-  /** Como `byId`, pero para cuando no encontrarla es un error y no un caso. */
-  async require(accountId: string): Promise<Account> {
+  /**
+   * La cuenta, si es de quien pregunta.
+   *
+   * Distingue «no existe» de «no es tuya» porque para registrar y depurar son
+   * cosas distintas. La capa HTTP los colapsa a propósito en un mismo 404:
+   * contestar 403 confirmaría que esa cuenta existe, y quien va probando
+   * identificadores no tiene por qué averiguarlo.
+   */
+  async requireOwnedBy(accountId: string, ownerId: string): Promise<Account> {
     const cuenta = await this.byId(accountId);
-    if (!cuenta) throw new AccountNotFoundError(accountId);
+    if (!cuenta) throw new UnknownAccountError(accountId);
+    if (cuenta.ownerId !== ownerId) throw new NotYourAccountError(accountId);
 
     return cuenta;
   }

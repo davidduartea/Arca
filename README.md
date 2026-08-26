@@ -70,22 +70,35 @@ porque se le cayó la red, no se cobra dos veces.
 **Fase 1 · motor de asientos** — hecho
 **Fase 2 · transferencias y concurrencia** — hecho
 **Fase 3 · extracto y saldo a fecha** — hecho
+**Fase 4 · API HTTP** — hecho
 
-102 tests contra Postgres de verdad, no contra dobles. No es purismo: buena
+149 tests contra Postgres de verdad, no contra dobles. No es purismo: buena
 parte de lo que hay que probar **es** la base, y un doble no tiene triggers. Un
 test que pasara con un doble no diría nada sobre si el libro cuadra.
 
 El motor registra movimientos, deriva saldos e invierte transacciones para
 corregir errores. No guarda saldos y no decide si un movimiento está permitido:
 eso es una política, y vive en `TransfersService`, que la aplica con la cuenta
-bloqueada. Y encima de todo eso, `StatementsService` sólo lee.
+bloqueada. `StatementsService` sólo lee. Y por encima, una API que traduce todo
+eso a HTTP sin que ninguno de ellos sepa que HTTP existe.
+
+| Método | Ruta                        | Qué                        |
+| ------ | --------------------------- | -------------------------- |
+| POST   | `/auth/register` · `/login` | abiertas                   |
+| GET    | `/auth/me`                  | quién soy                  |
+| GET    | `/accounts`                 | mis cuentas con saldo      |
+| POST   | `/accounts`                 | abrir una                  |
+| GET    | `/accounts/:id`             | una, con saldo             |
+| GET    | `/accounts/:id/statement`   | extracto paginado          |
+| GET    | `/accounts/:id/balance?at=` | saldo a una fecha          |
+| POST   | `/transfers`                | mover dinero               |
+| POST   | `/deposits`                 | simular un ingreso externo |
 
 Lo que viene:
 
-| Fase | Qué                      |
-| ---- | ------------------------ |
-| 4    | Interfaz                 |
-| 5    | Auditoría y conciliación |
+| Fase | Qué                                  |
+| ---- | ------------------------------------ |
+| 5    | Auditoría y conciliación, y una cara |
 
 ### Lo que costó averiguar
 
@@ -165,6 +178,37 @@ movimiento de dos partidas sobre la misma cuenta se lee así:
 | -------------------- | --------------------------------- |
 | cursor `(fecha, id)` | **2** ✓                           |
 | cursor sólo `fecha`  | 1 — uno desaparece                |
+
+### La frontera HTTP
+
+Dos decisiones al salir al cable.
+
+**Los importes viajan como texto.** Un número en JSON es un `double` de IEEE
+754, así que por encima de 2^53 centavos `JSON.parse` redondea en silencio: el
+mismo problema de precisión que el proyecto evita guardando enteros volvería a
+entrar por la puerta de la API. Un importe que llegue como número JSON se
+**rechaza** en lugar de aceptarse por amabilidad.
+
+```json
+{ "balance": "9007199254740993" }
+```
+
+`JSON.stringify` tampoco sabe serializar un `bigint` — lanza. Hay quien lo
+arregla parcheando `BigInt.prototype.toJSON`, y eso convierte la decisión en un
+accidente global que no se ve al leer el código. Aquí la conversión vive en un
+solo archivo, `http/views.ts`, precisamente para que se pueda comprobar de un
+vistazo que no queda ningún `bigint` sin convertir.
+
+**La cuenta de otro responde 404, no 403.** Un 403 confirma que esa cuenta
+existe, y quien va probando identificadores no tiene por qué averiguarlo. El
+dominio sí distingue «no existe» de «no es tuya», porque para registrar y
+depurar son cosas distintas; la traducción a HTTP las colapsa a propósito.
+
+Y esa traducción es la que hace que los servicios sigan sin saber que HTTP
+existe: `LedgerService` lanza `InsufficientEntriesError` porque es lo que ha
+pasado. Que eso sea un 400 se decide en `http/domain-exception.filter.ts`, y el
+mismo motor sirve igual para un cron, donde un código de estado no significaría
+nada.
 
 ---
 

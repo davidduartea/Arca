@@ -3,9 +3,10 @@ import { randomUUID } from "node:crypto";
 import type { TestingModule } from "@nestjs/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import { NotYourAccountError } from "../auth/auth.errors";
+import { UnknownAccountError } from "../ledger/ledger.errors";
 import { PrismaService } from "../prisma/prisma.service";
-import { createTestingModule, truncateAll } from "../test/database";
-import { AccountNotFoundError } from "./accounts.errors";
+import { createOwner, createTestingModule, truncateAll } from "../test/database";
 import { AccountsService } from "./accounts.service";
 
 describe("AccountsService", () => {
@@ -28,7 +29,10 @@ describe("AccountsService", () => {
   });
 
   it("abre una cuenta de persona por defecto", async () => {
-    const cuenta = await accounts.open({ ownerId: randomUUID(), name: "Cuenta corriente" });
+    const cuenta = await accounts.open({
+      ownerId: await createOwner(prisma),
+      name: "Cuenta corriente",
+    });
 
     expect(cuenta.kind).toBe("USER");
     expect(cuenta.name).toBe("Cuenta corriente");
@@ -38,7 +42,7 @@ describe("AccountsService", () => {
     // Un ingreso desde fuera tiene que salir de algún sitio: sale de una de
     // éstas, que sí puede quedar en negativo.
     const cuenta = await accounts.open({
-      ownerId: randomUUID(),
+      ownerId: await createOwner(prisma),
       name: "Mundo exterior",
       kind: "SYSTEM",
     });
@@ -47,7 +51,7 @@ describe("AccountsService", () => {
   });
 
   it("la encuentra por su id", async () => {
-    const abierta = await accounts.open({ ownerId: randomUUID(), name: "Ahorro" });
+    const abierta = await accounts.open({ ownerId: await createOwner(prisma), name: "Ahorro" });
 
     expect((await accounts.byId(abierta.id))?.name).toBe("Ahorro");
   });
@@ -60,15 +64,39 @@ describe("AccountsService", () => {
     expect(await accounts.byId("no-soy-un-uuid")).toBeNull();
   });
 
-  it("`require` falla en vez de devolver null", async () => {
-    await expect(accounts.require(randomUUID())).rejects.toThrow(AccountNotFoundError);
+  describe("requireOwnedBy", () => {
+    it("devuelve la cuenta a su dueño", async () => {
+      const dueno = await createOwner(prisma);
+      const cuenta = await accounts.open({ ownerId: dueno, name: "Ahorro" });
+
+      expect((await accounts.requireOwnedBy(cuenta.id, dueno)).name).toBe("Ahorro");
+    });
+
+    it("una cuenta que no existe es un error", async () => {
+      await expect(
+        accounts.requireOwnedBy(randomUUID(), await createOwner(prisma)),
+      ).rejects.toThrow(UnknownAccountError);
+    });
+
+    it("distingue «no existe» de «no es tuya»", async () => {
+      // El dominio los separa porque para registrar y depurar son cosas
+      // distintas. La capa HTTP los colapsa a propósito en un mismo 404.
+      const cuenta = await accounts.open({
+        ownerId: await createOwner(prisma),
+        name: "De otro",
+      });
+
+      await expect(
+        accounts.requireOwnedBy(cuenta.id, await createOwner(prisma)),
+      ).rejects.toThrow(NotYourAccountError);
+    });
   });
 
   it("lista las cuentas de un dueño por orden de apertura", async () => {
-    const dueno = randomUUID();
+    const dueno = await createOwner(prisma);
     await accounts.open({ ownerId: dueno, name: "Primera" });
     await accounts.open({ ownerId: dueno, name: "Segunda" });
-    await accounts.open({ ownerId: randomUUID(), name: "De otro" });
+    await accounts.open({ ownerId: await createOwner(prisma), name: "De otro" });
 
     const suyas = await accounts.byOwner(dueno);
 
