@@ -97,7 +97,7 @@ BEGIN
 
   IF descuadre <> 0 THEN
     RAISE EXCEPTION
-      'La transacción % descuadra en % céntimos: los asientos deben sumar cero',
+      'La transacción % descuadra en % centavos: los asientos deben sumar cero',
       NEW.transaction_id, descuadre
       USING ERRCODE = 'check_violation';
   END IF;

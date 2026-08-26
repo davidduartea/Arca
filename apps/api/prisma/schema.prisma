@@ -81,9 +81,15 @@ model Transaction {
 
 /// Una línea del libro: cuánto se movió en qué cuenta.
 ///
-/// El importe va en **céntimos, como entero**. Nunca un decimal: `0.1 + 0.2`
+/// El importe va en **centavos, como entero**. Nunca un decimal: `0.1 + 0.2`
 /// no es `0.3` en coma flotante, y en dinero esa diferencia se acumula hasta
 /// que los libros dejan de cuadrar.
+///
+/// El libro es de **una sola moneda: dólares**. No hay columna de divisa a
+/// propósito — mezclar monedas dentro de una transacción rompería la suma a
+/// cero, porque sumar dólares con euros no da un número con significado. Un
+/// libro multidivisa se hace con un libro por moneda y una transacción de
+/// cambio que los cruza, no con una columna más.
 ///
 /// El signo lleva la dirección: negativo sale, positivo entra. Los asientos de
 /// una misma transacción **suman cero**, y eso lo garantiza la base de datos —
