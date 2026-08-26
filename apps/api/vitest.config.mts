@@ -31,7 +31,13 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "lcov"],
       include: ["src/**/*.ts"],
-      exclude: ["src/**/*.spec.ts", "src/test/**", "src/main.ts", "src/**/*.module.ts"],
+      exclude: [
+        "src/**/*.spec.ts",
+        "src/test/**",
+        "src/main.ts",
+        "src/**/*.cli.ts",
+        "src/**/*.module.ts",
+      ],
       // Umbrales que rompen el build. Empiezan bajos a propósito y suben
       // conforme crece la suite: un umbral inalcanzable se termina borrando.
       thresholds: {

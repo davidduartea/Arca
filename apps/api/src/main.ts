@@ -5,10 +5,15 @@ import { NestFactory } from "@nestjs/core";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 
 import { AppModule } from "./app.module";
+import { loadDotEnvFile } from "./config/dotenv";
 import { loadEnvironment } from "./config/environment";
 
 async function bootstrap(): Promise<void> {
-  // Antes de montar nada: si falta configuración, mejor no levantar.
+  // En desarrollo la configuración vive en un archivo; en producción, en el
+  // entorno. Nest no carga el archivo por su cuenta.
+  loadDotEnvFile();
+
+  // Y antes de montar nada: si falta configuración, mejor no levantar.
   const env = loadEnvironment();
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule);

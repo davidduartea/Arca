@@ -71,8 +71,9 @@ porque se le cayó la red, no se cobra dos veces.
 **Fase 2 · transferencias y concurrencia** — hecho
 **Fase 3 · extracto y saldo a fecha** — hecho
 **Fase 4 · API HTTP** — hecho
+**Fase 5 · auditoría del libro** — hecho
 
-149 tests contra Postgres de verdad, no contra dobles. No es purismo: buena
+160 tests contra Postgres de verdad, no contra dobles. No es purismo: buena
 parte de lo que hay que probar **es** la base, y un doble no tiene triggers. Un
 test que pasara con un doble no diría nada sobre si el libro cuadra.
 
@@ -80,7 +81,8 @@ El motor registra movimientos, deriva saldos e invierte transacciones para
 corregir errores. No guarda saldos y no decide si un movimiento está permitido:
 eso es una política, y vive en `TransfersService`, que la aplica con la cuenta
 bloqueada. `StatementsService` sólo lee. Y por encima, una API que traduce todo
-eso a HTTP sin que ninguno de ellos sepa que HTTP existe.
+eso a HTTP sin que ninguno de ellos sepa que HTTP existe. Y al margen de todo,
+un comando que audita el libro entero y no se fía de nada de lo anterior.
 
 | Método | Ruta                        | Qué                        |
 | ------ | --------------------------- | -------------------------- |
@@ -94,11 +96,7 @@ eso a HTTP sin que ninguno de ellos sepa que HTTP existe.
 | POST   | `/transfers`                | mover dinero               |
 | POST   | `/deposits`                 | simular un ingreso externo |
 
-Lo que viene:
-
-| Fase | Qué                                  |
-| ---- | ------------------------------------ |
-| 5    | Auditoría y conciliación, y una cara |
+Lo que viene: **una cara**. El backend está entero.
 
 ### Lo que costó averiguar
 
@@ -210,6 +208,48 @@ pasado. Que eso sea un 400 se decide en `http/domain-exception.filter.ts`, y el
 mismo motor sirve igual para un cron, donde un código de estado no significaría
 nada.
 
+### Una auditoría que no se fía de nada
+
+Los triggers garantizan que **cada transacción** cuadra. `pnpm ledger:audit`
+pregunta si cuadra **el libro entero**, que no es la misma pregunta: un trigger
+protege la fila que se está escribiendo y no sabe nada del conjunto.
+
+```
+Arca · auditoría del libro
+  cuentas        3
+  transacciones  1
+  asientos       2
+  neto           $0.00   ← tiene que ser cero
+
+✗ 1 hallazgo, 1 crítico
+
+  [critical] overdrawn-user-accounts
+      · 6418f9b8-… con -5000
+```
+
+Ese ejemplo es real, y enseña por qué hacen falta ocho controles y no uno: **el
+neto es cero** — el libro cuadra globalmente — y aun así hay una persona en
+números rojos.
+
+Tres decisiones:
+
+**Va en SQL a pelo**, sin pasar por Prisma. Una auditoría que se apoya en el
+mismo código que audita no audita nada: si hubiera un fallo en cómo el proyecto
+lee o escribe asientos, una comprobación hecha con las mismas herramientas lo
+heredaría y saldría limpia.
+
+**Comprueba cosas que ya garantiza la base.** Que los asientos sumen cero lo
+impone un trigger, así que en teoría sobra. Se comprueba igual: un trigger se
+puede caer en una migración mal escrita, o desactivarse para una carga masiva y
+no volver a activarse. Hay tests que desactivan el trigger a propósito y
+verifican que la auditoría lo ve.
+
+**Es un comando y no un endpoint.** Auditar el libro entero es una operación de
+explotación, no algo que pida un cliente: devuelve el estado global del sistema,
+que no es asunto de nadie que tenga una cuenta. Como comando encaja en un cron o
+en un paso de CI, y el **código de salida** lo hace útil sin leerlo — distinto
+de cero, hay que mirar. Un aviso no rompe el comando; sólo lo crítico.
+
 ---
 
 ## Cómo correrlo
@@ -219,6 +259,7 @@ pnpm install
 pnpm db:up          # Postgres en el 5433
 pnpm db:migrate
 pnpm test           # crea la base de pruebas y la migra por su cuenta
+pnpm ledger:audit   # ¿cuadra el libro entero?
 ```
 
 El puerto es el 5433 y no el 5432 para no chocar con otras bases en la misma

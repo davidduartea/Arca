@@ -18,7 +18,8 @@
     "db:down": "docker compose down",
     "db:migrate": "pnpm --filter @arca/api db:migrate",
     "db:generate": "pnpm --filter @arca/api db:generate",
-    "db:studio": "pnpm --filter @arca/api db:studio"
+    "db:studio": "pnpm --filter @arca/api db:studio",
+    "ledger:audit": "pnpm --filter @arca/api ledger:audit"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

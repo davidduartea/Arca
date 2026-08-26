@@ -14,11 +14,12 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
-    "db:reset": "prisma migrate reset --force"
+    "db:reset": "prisma migrate reset --force",
+    "ledger:audit": "nest start --entryFile audit/audit.cli",
+    "ledger:audit:built": "node dist/audit/audit.cli.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.2.1",
-    "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.2.1",
     "@nestjs/jwt": "^11.0.2",
     "@nestjs/platform-express": "^11.2.1",

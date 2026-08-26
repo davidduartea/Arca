@@ -7,6 +7,7 @@ import { ThrottlerGuard } from "@nestjs/throttler";
 
 import { AccountsModule } from "../accounts/accounts.module";
 import { AppModule } from "../app.module";
+import { AuditModule } from "../audit/audit.module";
 import { JWT_SECRET } from "../auth/token.service";
 import { LedgerModule } from "../ledger/ledger.module";
 import { DATABASE_URL, PrismaService } from "../prisma/prisma.service";
@@ -19,7 +20,7 @@ import { TEST_DATABASE_URL } from "./database-url";
 const TEST_JWT_SECRET = "secreto-de-pruebas-suficientemente-largo-para-el-esquema";
 
 /** Deja pasar todo, para los tests que no van sobre la limitación de intentos. */
-const SIN_LIMITE = { canActivate: (): boolean => true };
+const NO_LIMIT = { canActivate: (): boolean => true };
 
 /**
  * Levanta los servicios apuntando a la base de pruebas.
@@ -28,16 +29,16 @@ const SIN_LIMITE = { canActivate: (): boolean => true };
  * primer test fallaría con el pool cerrado.
  */
 export async function createTestingModule(): Promise<TestingModule> {
-  const modulo = await Test.createTestingModule({
-    imports: [AccountsModule, LedgerModule, StatementsModule, TransfersModule],
+  const moduleRef = await Test.createTestingModule({
+    imports: [AccountsModule, AuditModule, LedgerModule, StatementsModule, TransfersModule],
   })
     .overrideProvider(DATABASE_URL)
     .useValue(TEST_DATABASE_URL)
     .compile();
 
-  await modulo.init();
+  await moduleRef.init();
 
-  return modulo;
+  return moduleRef;
 }
 
 /**
@@ -48,7 +49,7 @@ export async function createTestingModule(): Promise<TestingModule> {
  * se pueden comprobar llamando a los servicios a pelo.
  */
 export async function createTestingApp({ throttle = false } = {}): Promise<INestApplication> {
-  const constructor = Test.createTestingModule({ imports: [AppModule] })
+  const builder = Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(DATABASE_URL)
     .useValue(TEST_DATABASE_URL)
     .overrideProvider(JWT_SECRET)
@@ -57,9 +58,9 @@ export async function createTestingApp({ throttle = false } = {}): Promise<INest
   // La limitación se desactiva salvo donde se esté probando: cinco intentos por
   // minuto son suficientes para una persona y ridículos para una suite que
   // inicia sesión veinte veces.
-  if (!throttle) constructor.overrideProvider(ThrottlerGuard).useValue(SIN_LIMITE);
+  if (!throttle) builder.overrideProvider(ThrottlerGuard).useValue(NO_LIMIT);
 
-  const app = (await constructor.compile()).createNestApplication();
+  const app = (await builder.compile()).createNestApplication();
   await app.init();
 
   return app;
@@ -93,10 +94,10 @@ export async function truncateAll(prisma: PrismaService): Promise<void> {
  * sirve — que es exactamente el agujero que la clave cierra.
  */
 export async function createOwner(prisma: PrismaService): Promise<string> {
-  const usuario = await prisma.user.create({
+  const user = await prisma.user.create({
     data: { email: `${randomUUID()}@arca.test`, passwordHash: "sin-acceso" },
     select: { id: true },
   });
 
-  return usuario.id;
+  return user.id;
 }
