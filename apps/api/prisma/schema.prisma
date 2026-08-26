@@ -107,9 +107,16 @@ model Entry {
 
   createdAt DateTime @default(now()) @map("created_at")
 
-  // El índice compuesto es el que sirve al extracto y al cálculo de saldo:
-  // las dos consultas filtran por cuenta y ordenan por fecha.
-  @@index([accountId, createdAt])
+  // El índice que sirve al extracto y al cálculo de saldo: las dos consultas
+  // filtran por cuenta y ordenan por fecha.
+  //
+  // El `id` al final no es decorativo. La paginación del extracto ordena por
+  // (fecha, id) porque la fecha sola empata — los asientos de una misma
+  // transacción comparten `created_at` al milisegundo, ya que en Postgres
+  // `now()` devuelve la hora de inicio de la transacción, no la de cada fila.
+  // Sin el `id` en el índice, Postgres resuelve el empate con un ordenamiento
+  // aparte; con él, el recorrido del índice ya sale ordenado.
+  @@index([accountId, createdAt, id])
   @@index([transactionId])
   @@map("entries")
 }

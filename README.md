@@ -69,23 +69,23 @@ porque se le cayó la red, no se cobra dos veces.
 **Fase 0 · esquema e invariante** — hecho
 **Fase 1 · motor de asientos** — hecho
 **Fase 2 · transferencias y concurrencia** — hecho
+**Fase 3 · extracto y saldo a fecha** — hecho
 
-76 tests contra Postgres de verdad, no contra dobles. No es purismo: buena parte
-de lo que hay que probar **es** la base, y un doble no tiene triggers. Un test
-que pasara con un doble no diría nada sobre si el libro cuadra.
+102 tests contra Postgres de verdad, no contra dobles. No es purismo: buena
+parte de lo que hay que probar **es** la base, y un doble no tiene triggers. Un
+test que pasara con un doble no diría nada sobre si el libro cuadra.
 
 El motor registra movimientos, deriva saldos e invierte transacciones para
 corregir errores. No guarda saldos y no decide si un movimiento está permitido:
 eso es una política, y vive en `TransfersService`, que la aplica con la cuenta
-bloqueada.
+bloqueada. Y encima de todo eso, `StatementsService` sólo lee.
 
 Lo que viene:
 
-| Fase | Qué                                                |
-| ---- | -------------------------------------------------- |
-| 3    | Extracto con paginación por cursor y saldo a fecha |
-| 4    | Interfaz                                           |
-| 5    | Auditoría y conciliación                           |
+| Fase | Qué                      |
+| ---- | ------------------------ |
+| 4    | Interfaz                 |
+| 5    | Auditoría y conciliación |
 
 ### Lo que costó averiguar
 
@@ -135,6 +135,36 @@ Y las llaves se cogen **siempre en el mismo orden**, ordenadas por id. Sin eso,
 una transferencia A→B y otra B→A a la vez se quedan esperándose: cada una tiene
 la que la otra necesita. Postgres detecta el interbloqueo y mata a una, así que
 el síntoma no sería un cuelgue sino un fallo intermitente e inexplicable.
+
+### El movimiento que desaparece
+
+El extracto pagina por cursor y no por `OFFSET`, y no es por rendimiento.
+
+`LIMIT 20 OFFSET 40` se mide sobre un resultado que se mueve. Si entre la página
+1 y la 2 llega un movimiento nuevo, todo se desplaza una posición: el último de
+la página 1 vuelve a salir el primero en la 2. En una lista de artículos es un
+incordio; en un extracto bancario es un movimiento duplicado ante los ojos de
+quien lo lee. Y al revés, algo puede **desaparecer** sin que nadie se entere.
+
+El cursor apunta a una fila concreta, y lleva **dos** campos:
+
+```
+(created_at, id)
+```
+
+La fecha sola no basta, y aquí está garantizado que no basta: en Postgres
+`now()` devuelve la hora de inicio de la transacción, no la de cada fila, así
+que todos los asientos de un mismo movimiento comparten `created_at` al
+milisegundo. `created_at` es `TIMESTAMP(3)` — la misma precisión que `Date` en
+JavaScript — de modo que el empate llega intacto hasta el cliente.
+
+Como en la fase 2, lo comprobé al revés. Con un cursor de sólo fecha, un
+movimiento de dos partidas sobre la misma cuenta se lee así:
+
+|                      | asientos que devuelve el extracto |
+| -------------------- | --------------------------------- |
+| cursor `(fecha, id)` | **2** ✓                           |
+| cursor sólo `fecha`  | 1 — uno desaparece                |
 
 ---
 
