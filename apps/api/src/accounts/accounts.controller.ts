@@ -16,7 +16,7 @@ import { AccountsService } from "./accounts.service";
  * comprobación de fondos. Si el cliente pudiera elegirlo, cualquiera abriría una
  * cuenta de sistema y se transferiría dinero desde la nada.
  */
-const cuentaNueva = z.object({
+const newAccountSchema = z.object({
   name: z.string().trim().min(1, "hace falta un nombre").max(80),
 });
 
@@ -36,11 +36,13 @@ export class AccountsController {
    */
   @Get()
   async list(@CurrentUser() user: AuthenticatedUser): Promise<{ accounts: AccountView[] }> {
-    const mias = await this.accounts.byOwner(user.id);
+    const mine = await this.accounts.byOwner(user.id);
 
     return {
       accounts: await Promise.all(
-        mias.map(async (cuenta) => accountView(cuenta, await this.ledger.balanceOf(cuenta.id))),
+        mine.map(async (account) =>
+          accountView(account, await this.ledger.balanceOf(account.id)),
+        ),
       ),
     };
   }
@@ -49,11 +51,11 @@ export class AccountsController {
   @HttpCode(HttpStatus.CREATED)
   async open(
     @CurrentUser() user: AuthenticatedUser,
-    @Body(new ZodValidationPipe(cuentaNueva)) body: { name: string },
+    @Body(new ZodValidationPipe(newAccountSchema)) body: { name: string },
   ): Promise<AccountView> {
-    const cuenta = await this.accounts.open({ ownerId: user.id, name: body.name });
+    const account = await this.accounts.open({ ownerId: user.id, name: body.name });
 
-    return accountView(cuenta, 0n);
+    return accountView(account, 0n);
   }
 
   @Get(":accountId")
@@ -61,8 +63,8 @@ export class AccountsController {
     @CurrentUser() user: AuthenticatedUser,
     @Param("accountId") accountId: string,
   ): Promise<AccountView> {
-    const cuenta = await this.accounts.requireOwnedBy(accountId, user.id);
+    const account = await this.accounts.requireOwnedBy(accountId, user.id);
 
-    return accountView(cuenta, await this.ledger.balanceOf(cuenta.id));
+    return accountView(account, await this.ledger.balanceOf(account.id));
   }
 }

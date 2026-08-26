@@ -22,24 +22,24 @@ import { TransfersService } from "./transfers.service";
  * negativo sería una transferencia al revés disfrazada, capaz de esquivar la
  * comprobación de fondos de quien la recibe.
  */
-const importeEnCentavos = z
+const amountInCents = z
   .string({ message: "el importe debe llegar como texto, no como número" })
   .regex(/^\d+$/, "centavos en dígitos, sin signo ni decimales")
   .transform(BigInt);
 
-const uuid = z.string().uuid("no es un identificador de cuenta");
+const accountIdSchema = z.string().uuid("no es un identificador de cuenta");
 
-const ordenDeTransferencia = z.object({
-  fromAccountId: uuid,
-  toAccountId: uuid,
-  amount: importeEnCentavos,
+const transferOrderSchema = z.object({
+  fromAccountId: accountIdSchema,
+  toAccountId: accountIdSchema,
+  amount: amountInCents,
   description: z.string().trim().min(1).max(140).optional(),
   idempotencyKey: z.string().trim().min(8).max(128).optional(),
 });
 
-const ordenDeIngreso = z.object({
-  toAccountId: uuid,
-  amount: importeEnCentavos,
+const depositOrderSchema = z.object({
+  toAccountId: accountIdSchema,
+  amount: amountInCents,
   description: z.string().trim().min(1).max(140).optional(),
   idempotencyKey: z.string().trim().min(8).max(128).optional(),
 });
@@ -62,8 +62,8 @@ export class TransfersController {
   @HttpCode(HttpStatus.CREATED)
   async transfer(
     @CurrentUser() user: AuthenticatedUser,
-    @Body(new ZodValidationPipe(ordenDeTransferencia))
-    body: z.output<typeof ordenDeTransferencia>,
+    @Body(new ZodValidationPipe(transferOrderSchema))
+    body: z.output<typeof transferOrderSchema>,
   ): Promise<TransactionView> {
     await this.accounts.requireOwnedBy(body.fromAccountId, user.id);
 
@@ -83,7 +83,7 @@ export class TransfersController {
   @HttpCode(HttpStatus.CREATED)
   async deposit(
     @CurrentUser() user: AuthenticatedUser,
-    @Body(new ZodValidationPipe(ordenDeIngreso)) body: z.output<typeof ordenDeIngreso>,
+    @Body(new ZodValidationPipe(depositOrderSchema)) body: z.output<typeof depositOrderSchema>,
   ): Promise<TransactionView> {
     await this.accounts.requireOwnedBy(body.toAccountId, user.id);
 

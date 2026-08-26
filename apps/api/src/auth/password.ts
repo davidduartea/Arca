@@ -1,7 +1,7 @@
-import { randomBytes, scrypt as scryptConCallback, timingSafeEqual } from "node:crypto";
+import { randomBytes, scrypt as scryptWithCallback, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 
-const scrypt = promisify(scryptConCallback) as (
+const scrypt = promisify(scryptWithCallback) as (
   password: string,
   salt: Buffer,
   keylen: number,
@@ -20,15 +20,15 @@ const scrypt = promisify(scryptConCallback) as (
  * `maxmem` hay que pasarlo a mano: Node lo limita a 32 MB por defecto y con
  * estos parámetros la llamada fallaría.
  */
-const COSTE = 2 ** 16;
-const BLOQUE = 8;
-const PARALELISMO = 2;
-const MEMORIA_MAXIMA = 192 * 1024 * 1024;
+const COST = 2 ** 16;
+const BLOCK_SIZE = 8;
+const PARALLELISM = 2;
+const MAX_MEMORY = 192 * 1024 * 1024;
 
-const LONGITUD_SAL = 16;
-const LONGITUD_CLAVE = 32;
-const ETIQUETA = "scrypt";
-const SEPARADOR = "$";
+const SALT_LENGTH = 16;
+const KEY_LENGTH = 32;
+const LABEL = "scrypt";
+const SEPARATOR = "$";
 
 /**
  * Se usa scrypt y no argon2id, que sería la primera opción.
@@ -44,17 +44,17 @@ const SEPARADOR = "$";
  * cualquier cosa que llegue con un `postinstall` sin revisar.
  */
 export async function hashPassword(password: string): Promise<string> {
-  const sal = randomBytes(LONGITUD_SAL);
-  const clave = await derivar(password, sal, { N: COSTE, r: BLOQUE, p: PARALELISMO });
+  const salt = randomBytes(SALT_LENGTH);
+  const key = await derive(password, salt, { N: COST, r: BLOCK_SIZE, p: PARALLELISM });
 
   return [
-    ETIQUETA,
-    COSTE,
-    BLOQUE,
-    PARALELISMO,
-    sal.toString("base64url"),
-    clave.toString("base64url"),
-  ].join(SEPARADOR);
+    LABEL,
+    COST,
+    BLOCK_SIZE,
+    PARALLELISM,
+    salt.toString("base64url"),
+    key.toString("base64url"),
+  ].join(SEPARATOR);
 }
 
 /**
@@ -68,36 +68,36 @@ export async function hashPassword(password: string): Promise<string> {
  * el resultado es el mismo — esa contraseña no vale — y así un registro dañado
  * no tumba el proceso.
  */
-export async function verifyPassword(password: string, guardado: string): Promise<boolean> {
-  const partes = guardado.split(SEPARADOR);
-  if (partes.length !== 6 || partes[0] !== ETIQUETA) return false;
+export async function verifyPassword(password: string, stored: string): Promise<boolean> {
+  const parts = stored.split(SEPARATOR);
+  if (parts.length !== 6 || parts[0] !== LABEL) return false;
 
-  const [, coste, bloque, paralelismo, sal, esperada] = partes;
-  const parametros = {
-    N: Number(coste),
-    r: Number(bloque),
-    p: Number(paralelismo),
+  const [, cost, blockSize, parallelism, salt, expected] = parts;
+  const params = {
+    N: Number(cost),
+    r: Number(blockSize),
+    p: Number(parallelism),
   };
 
-  if (!Object.values(parametros).every((valor) => Number.isInteger(valor) && valor > 0)) {
+  if (!Object.values(params).every((value) => Number.isInteger(value) && value > 0)) {
     return false;
   }
-  if (sal === undefined || esperada === undefined) return false;
+  if (salt === undefined || expected === undefined) return false;
 
-  const referencia = Buffer.from(esperada, "base64url");
-  if (referencia.length !== LONGITUD_CLAVE) return false;
+  const reference = Buffer.from(expected, "base64url");
+  if (reference.length !== KEY_LENGTH) return false;
 
-  const candidata = await derivar(password, Buffer.from(sal, "base64url"), parametros);
+  const candidate = await derive(password, Buffer.from(salt, "base64url"), params);
 
   // `timingSafeEqual` y no `===`: comparar bytes hasta el primero que difiere
   // tarda distinto según cuántos coincidan, y ese tiempo se puede medir.
-  return timingSafeEqual(candidata, referencia);
+  return timingSafeEqual(candidate, reference);
 }
 
-function derivar(
+function derive(
   password: string,
-  sal: Buffer,
-  parametros: { N: number; r: number; p: number },
+  salt: Buffer,
+  params: { N: number; r: number; p: number },
 ): Promise<Buffer> {
-  return scrypt(password, sal, LONGITUD_CLAVE, { ...parametros, maxmem: MEMORIA_MAXIMA });
+  return scrypt(password, salt, KEY_LENGTH, { ...params, maxmem: MAX_MEMORY });
 }

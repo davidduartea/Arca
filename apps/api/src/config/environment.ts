@@ -35,7 +35,7 @@ const schema = z.object({
     .string()
     .min(1, "hace falta la cadena de conexión")
     .refine(
-      (value) => value.startsWith("postgresql://") || value.startsWith("postgres://"),
+      (url) => url.startsWith("postgresql://") || url.startsWith("postgres://"),
       "debe ser una URL de PostgreSQL",
     ),
 });

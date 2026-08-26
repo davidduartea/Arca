@@ -16,7 +16,7 @@ export interface StatementCursor {
   id: string;
 }
 
-const SEPARADOR = "|";
+const SEPARATOR = "|";
 
 /**
  * El cursor se codifica para que sea **opaco**.
@@ -30,24 +30,24 @@ const SEPARADOR = "|";
  * `+` y `/` del alfabeto normal hay que escaparlos.
  */
 export function encodeCursor(cursor: StatementCursor): string {
-  const plano = `${cursor.createdAt.toISOString()}${SEPARADOR}${cursor.id}`;
+  const plain = `${cursor.createdAt.toISOString()}${SEPARATOR}${cursor.id}`;
 
-  return Buffer.from(plano, "utf8").toString("base64url");
+  return Buffer.from(plain, "utf8").toString("base64url");
 }
 
 export function decodeCursor(raw: string): StatementCursor {
   // `Buffer.from` con base64 no falla ante basura: se come lo que puede y
   // devuelve lo que sea. Así que validar el resultado no es opcional.
-  const plano = Buffer.from(raw, "base64url").toString("utf8");
-  const partes = plano.split(SEPARADOR);
+  const plain = Buffer.from(raw, "base64url").toString("utf8");
+  const parts = plain.split(SEPARATOR);
 
-  if (partes.length !== 2) throw new InvalidCursorError(raw);
+  if (parts.length !== 2) throw new InvalidCursorError(raw);
 
-  const [fecha, id] = partes;
-  if (fecha === undefined || id === undefined) throw new InvalidCursorError(raw);
+  const [rawDate, id] = parts;
+  if (rawDate === undefined || id === undefined) throw new InvalidCursorError(raw);
   if (!isUuid(id)) throw new InvalidCursorError(raw);
 
-  const createdAt = new Date(fecha);
+  const createdAt = new Date(rawDate);
   if (Number.isNaN(createdAt.getTime())) throw new InvalidCursorError(raw);
 
   return { createdAt, id };

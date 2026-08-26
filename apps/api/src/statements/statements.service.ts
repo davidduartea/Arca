@@ -9,8 +9,8 @@ import { decodeCursor, encodeCursor } from "./cursor";
 import { InvalidPageSizeError } from "./statements.errors";
 import type { StatementLine, StatementPage, StatementQuery } from "./statements.types";
 
-const TAMANO_POR_DEFECTO = 50;
-const TAMANO_MAXIMO = 100;
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 100;
 
 /** Lo que hace falta de cada asiento para montar una línea. */
 interface EntryRow {
@@ -59,16 +59,16 @@ export class StatementsService {
   async statement(accountId: string, query: StatementQuery = {}): Promise<StatementPage> {
     await this.assertAccountExists(accountId);
 
-    const tamano = acotarTamano(query.limit);
-    const desde = query.cursor === undefined ? null : decodeCursor(query.cursor);
+    const size = clampPageSize(query.limit);
+    const from = query.cursor === undefined ? null : decodeCursor(query.cursor);
 
     // Se pide una fila de más. Si llega, hay siguiente página — y así se evita
     // el `COUNT(*)` que casi todas las paginaciones hacen sin necesitarlo, que
     // en una tabla grande cuesta más que la propia página.
-    const filas = await this.prisma.entry.findMany({
-      where: { accountId, ...anteriorA(desde) },
+    const rows = await this.prisma.entry.findMany({
+      where: { accountId, ...before(from) },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      take: tamano + 1,
+      take: size + 1,
       select: {
         id: true,
         transactionId: true,
@@ -78,15 +78,15 @@ export class StatementsService {
       },
     });
 
-    const hayMas = filas.length > tamano;
-    const pagina = hayMas ? filas.slice(0, tamano) : filas;
+    const hasMore = rows.length > size;
+    const page = hasMore ? rows.slice(0, size) : rows;
 
-    const primera = pagina[0];
-    if (primera === undefined) return { lines: [], nextCursor: null };
+    const first = page[0];
+    if (first === undefined) return { lines: [], nextCursor: null };
 
     return {
-      lines: await this.aLineas(accountId, pagina, primera),
-      nextCursor: hayMas ? cursorDeLaUltima(pagina) : null,
+      lines: await this.toLines(accountId, page, first),
+      nextCursor: hasMore ? cursorOfLast(page) : null,
     };
   }
 
@@ -121,39 +121,39 @@ export class StatementsService {
    * saber el saldo de la primera — que incluye todo lo anterior — e ir restando
    * hacia abajo: el saldo antes de un asiento es el de después menos su importe.
    */
-  private async aLineas(
+  private async toLines(
     accountId: string,
-    pagina: EntryRow[],
-    primera: EntryRow,
+    page: EntryRow[],
+    first: EntryRow,
   ): Promise<StatementLine[]> {
-    let saldo = await this.balanceUpTo(accountId, primera);
+    let balance = await this.balanceUpTo(accountId, first);
 
-    return pagina.map((fila) => {
-      const linea: StatementLine = {
-        entryId: fila.id,
-        transactionId: fila.transactionId,
-        description: fila.transaction.description,
-        amount: fila.amount,
-        balance: saldo,
-        isReversal: fila.transaction.reversesId !== null,
-        createdAt: fila.createdAt,
+    return page.map((row) => {
+      const line: StatementLine = {
+        entryId: row.id,
+        transactionId: row.transactionId,
+        description: row.transaction.description,
+        amount: row.amount,
+        balance: balance,
+        isReversal: row.transaction.reversesId !== null,
+        createdAt: row.createdAt,
       };
 
-      saldo -= fila.amount;
+      balance -= row.amount;
 
-      return linea;
+      return line;
     });
   }
 
   /** El saldo contando este asiento y todos los anteriores. */
-  private async balanceUpTo(accountId: string, hasta: StatementCursor): Promise<bigint> {
+  private async balanceUpTo(accountId: string, upTo: StatementCursor): Promise<bigint> {
     const { _sum } = await this.prisma.entry.aggregate({
       _sum: { amount: true },
       where: {
         accountId,
         OR: [
-          { createdAt: { lt: hasta.createdAt } },
-          { createdAt: hasta.createdAt, id: { lte: hasta.id } },
+          { createdAt: { lt: upTo.createdAt } },
+          { createdAt: upTo.createdAt, id: { lte: upTo.id } },
         ],
       },
     });
@@ -164,11 +164,11 @@ export class StatementsService {
   private async assertAccountExists(accountId: string): Promise<void> {
     if (!isUuid(accountId)) throw new UnknownAccountError(accountId);
 
-    const cuenta = await this.prisma.account.findUnique({
+    const account = await this.prisma.account.findUnique({
       where: { id: accountId },
       select: { id: true },
     });
-    if (!cuenta) throw new UnknownAccountError(accountId);
+    if (!account) throw new UnknownAccountError(accountId);
   }
 }
 
@@ -179,23 +179,21 @@ export class StatementsService {
  * expresarlo, así que hay que desdoblarlo: o la fecha es menor, o es la misma y
  * el id es menor. Es literalmente la misma condición escrita a mano.
  */
-function anteriorA(desde: StatementCursor | null): Prisma.EntryWhereInput {
-  if (desde === null) return {};
+function before(from: StatementCursor | null): Prisma.EntryWhereInput {
+  if (from === null) return {};
 
   return {
     OR: [
-      { createdAt: { lt: desde.createdAt } },
-      { createdAt: desde.createdAt, id: { lt: desde.id } },
+      { createdAt: { lt: from.createdAt } },
+      { createdAt: from.createdAt, id: { lt: from.id } },
     ],
   };
 }
 
-function cursorDeLaUltima(pagina: EntryRow[]): string | null {
-  const ultima = pagina[pagina.length - 1];
+function cursorOfLast(page: EntryRow[]): string | null {
+  const last = page[page.length - 1];
 
-  return ultima === undefined
-    ? null
-    : encodeCursor({ createdAt: ultima.createdAt, id: ultima.id });
+  return last === undefined ? null : encodeCursor({ createdAt: last.createdAt, id: last.id });
 }
 
 /**
@@ -206,9 +204,9 @@ function cursorDeLaUltima(pagina: EntryRow[]): string | null {
  * no es una intención: es un fallo de quien llama, y recortarlo en silencio lo
  * escondería.
  */
-function acotarTamano(limit: number | undefined): number {
-  if (limit === undefined) return TAMANO_POR_DEFECTO;
+function clampPageSize(limit: number | undefined): number {
+  if (limit === undefined) return DEFAULT_PAGE_SIZE;
   if (!Number.isInteger(limit) || limit < 1) throw new InvalidPageSizeError(limit);
 
-  return Math.min(limit, TAMANO_MAXIMO);
+  return Math.min(limit, MAX_PAGE_SIZE);
 }

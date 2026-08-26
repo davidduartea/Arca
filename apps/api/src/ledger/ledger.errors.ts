@@ -15,15 +15,15 @@ export abstract class LedgerError extends Error {
 
 /** Los asientos no suman cero: hay dinero que aparece o desaparece. */
 export class UnbalancedTransactionError extends LedgerError {
-  constructor(readonly descuadre: bigint) {
-    super(`La transacción descuadra en ${descuadre} centavos: los asientos deben sumar cero`);
+  constructor(readonly imbalance: bigint) {
+    super(`La transacción descuadra en ${imbalance} centavos: los asientos deben sumar cero`);
   }
 }
 
 /** Un solo asiento no es partida doble. */
 export class InsufficientEntriesError extends LedgerError {
-  constructor(readonly recibidos: number) {
-    super(`Una transacción necesita al menos dos asientos y llegaron ${recibidos}`);
+  constructor(readonly received: number) {
+    super(`Una transacción necesita al menos dos asientos y llegaron ${received}`);
   }
 }
 
@@ -72,7 +72,7 @@ export class IdempotencyKeyReusedError extends LedgerError {
  * validaciones del servicio. No debería ocurrir: es la red de seguridad.
  */
 export class LedgerInvariantViolatedError extends LedgerError {
-  constructor(readonly detalle: string) {
-    super(`La base rechazó la escritura: ${detalle}`);
+  constructor(readonly detail: string) {
+    super(`La base rechazó la escritura: ${detail}`);
   }
 }

@@ -24,7 +24,7 @@ import {
   SameAccountTransferError,
 } from "../transfers/transfers.errors";
 
-interface Traduccion {
+interface Translation {
   status: HttpStatus;
   /** Si el mensaje del dominio se puede enseñar tal cual. */
   visible: boolean;
@@ -41,7 +41,7 @@ interface Traduccion {
  *
  * El orden importa: se busca por `instanceof`, así que lo específico va antes.
  */
-const TRADUCCIONES: [new (...args: never[]) => Error, Traduccion][] = [
+const TRANSLATIONS: [new (...args: never[]) => Error, Translation][] = [
   // ─── 401 ────────────────────────────────────────────────────────────────
   [InvalidCredentialsError, { status: HttpStatus.UNAUTHORIZED, visible: true }],
 
@@ -77,7 +77,7 @@ const TRADUCCIONES: [new (...args: never[]) => Error, Traduccion][] = [
   [LedgerInvariantViolatedError, { status: HttpStatus.INTERNAL_SERVER_ERROR, visible: false }],
 ];
 
-const MENSAJES_GENERICOS: Partial<Record<HttpStatus, string>> = {
+const GENERIC_MESSAGES: Partial<Record<HttpStatus, string>> = {
   [HttpStatus.NOT_FOUND]: "No se ha encontrado",
   [HttpStatus.INTERNAL_SERVER_ERROR]: "Algo ha ido mal por nuestra parte",
 };
@@ -102,16 +102,16 @@ export class DomainExceptionFilter implements ExceptionFilter {
       return;
     }
 
-    const traducido = traducir(exception);
-    if (traducido) {
-      const { error, status, visible } = traducido;
+    const translated = translate(exception);
+    if (translated) {
+      const { error, status, visible } = translated;
 
       if (status >= HttpStatus.INTERNAL_SERVER_ERROR)
         this.logger.error(error.message, error.stack);
 
       response.status(status).json({
         error: error.name,
-        message: visible ? error.message : (MENSAJES_GENERICOS[status] ?? "Error"),
+        message: visible ? error.message : (GENERIC_MESSAGES[status] ?? "Error"),
       });
       return;
     }
@@ -120,15 +120,15 @@ export class DomainExceptionFilter implements ExceptionFilter {
     this.logger.error(exception);
     response.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       error: "InternalError",
-      message: MENSAJES_GENERICOS[HttpStatus.INTERNAL_SERVER_ERROR],
+      message: GENERIC_MESSAGES[HttpStatus.INTERNAL_SERVER_ERROR],
     });
   }
 }
 
-function traducir(exception: unknown): (Traduccion & { error: Error }) | null {
+function translate(exception: unknown): (Translation & { error: Error }) | null {
   if (!(exception instanceof Error)) return null;
 
-  const encontrada = TRADUCCIONES.find(([tipo]) => exception instanceof tipo);
+  const found = TRANSLATIONS.find(([type]) => exception instanceof type);
 
-  return encontrada ? { ...encontrada[1], error: exception } : null;
+  return found ? { ...found[1], error: exception } : null;
 }

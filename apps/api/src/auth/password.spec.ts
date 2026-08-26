@@ -21,24 +21,24 @@ describe("password", () => {
   it("la misma contraseña da hashes distintos cada vez", async () => {
     // Es la sal. Sin ella, dos personas con la misma contraseña tendrían el
     // mismo hash, y una filtración diría de un vistazo quién comparte cuál.
-    const uno = await hashPassword(PASSWORD);
-    const otro = await hashPassword(PASSWORD);
+    const first = await hashPassword(PASSWORD);
+    const second = await hashPassword(PASSWORD);
 
-    expect(uno).not.toBe(otro);
-    expect(await verifyPassword(PASSWORD, uno)).toBe(true);
-    expect(await verifyPassword(PASSWORD, otro)).toBe(true);
+    expect(first).not.toBe(second);
+    expect(await verifyPassword(PASSWORD, first)).toBe(true);
+    expect(await verifyPassword(PASSWORD, second)).toBe(true);
   });
 
   it("el hash lleva dentro sus parámetros", async () => {
     // Van en el propio hash para poder endurecerlos mañana sin invalidar las
     // contraseñas de todo el mundo: las viejas se siguen verificando con los
     // suyos.
-    const [etiqueta, coste, bloque, paralelismo] = (await hashPassword(PASSWORD)).split("$");
+    const [label, cost, blockSize, parallelism] = (await hashPassword(PASSWORD)).split("$");
 
-    expect(etiqueta).toBe("scrypt");
-    expect(Number(coste)).toBe(2 ** 16);
-    expect(Number(bloque)).toBe(8);
-    expect(Number(paralelismo)).toBe(2);
+    expect(label).toBe("scrypt");
+    expect(Number(cost)).toBe(2 ** 16);
+    expect(Number(blockSize)).toBe(8);
+    expect(Number(parallelism)).toBe(2);
   });
 
   it("no deja rastro de la contraseña", async () => {
@@ -66,31 +66,31 @@ describe("password", () => {
     });
 
     it("rechaza otro algoritmo aunque tenga la forma correcta", async () => {
-      const ajeno = (await hashPassword(PASSWORD)).replace("scrypt$", "bcrypt$");
+      const foreign = (await hashPassword(PASSWORD)).replace("scrypt$", "bcrypt$");
 
-      expect(await verifyPassword(PASSWORD, ajeno)).toBe(false);
+      expect(await verifyPassword(PASSWORD, foreign)).toBe(false);
     });
 
     it("rechaza parámetros que no son números positivos", async () => {
-      const real = await hashPassword(PASSWORD);
-      const [, , bloque, paralelismo, sal, clave] = real.split("$");
+      const genuine = await hashPassword(PASSWORD);
+      const [, , blockSize, parallelism, salt, key] = genuine.split("$");
 
       expect(
         await verifyPassword(
           PASSWORD,
-          ["scrypt", "0", bloque, paralelismo, sal, clave].join("$"),
+          ["scrypt", "0", blockSize, parallelism, salt, key].join("$"),
         ),
       ).toBe(false);
       expect(
         await verifyPassword(
           PASSWORD,
-          ["scrypt", "abc", bloque, paralelismo, sal, clave].join("$"),
+          ["scrypt", "abc", blockSize, parallelism, salt, key].join("$"),
         ),
       ).toBe(false);
       expect(
         await verifyPassword(
           PASSWORD,
-          ["scrypt", "-1", bloque, paralelismo, sal, clave].join("$"),
+          ["scrypt", "-1", blockSize, parallelism, salt, key].join("$"),
         ),
       ).toBe(false);
     });
@@ -98,11 +98,11 @@ describe("password", () => {
     it("rechaza una clave de longitud distinta", async () => {
       // `timingSafeEqual` lanza si los buffers no miden lo mismo, así que la
       // longitud se comprueba antes.
-      const real = await hashPassword(PASSWORD);
-      const partes = real.split("$");
-      partes[5] = "corta";
+      const genuine = await hashPassword(PASSWORD);
+      const parts = genuine.split("$");
+      parts[5] = "corta";
 
-      expect(await verifyPassword(PASSWORD, partes.join("$"))).toBe(false);
+      expect(await verifyPassword(PASSWORD, parts.join("$"))).toBe(false);
     });
   });
 });

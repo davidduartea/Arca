@@ -17,11 +17,11 @@ export abstract class TransferError extends Error {
 export class InsufficientFundsError extends TransferError {
   constructor(
     readonly accountId: string,
-    readonly saldo: bigint,
-    readonly solicitado: bigint,
+    readonly balance: bigint,
+    readonly requested: bigint,
   ) {
     super(
-      `La cuenta ${accountId} tiene ${formatUsd(saldo)} y se le piden ${formatUsd(solicitado)}`,
+      `La cuenta ${accountId} tiene ${formatUsd(balance)} y se le piden ${formatUsd(requested)}`,
     );
   }
 }

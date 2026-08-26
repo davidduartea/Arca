@@ -28,11 +28,11 @@ import type { EntryDraft, PostedTransaction, TransactionDraft } from "./ledger.t
 export type LedgerExecutor = Prisma.TransactionClient;
 
 /** Los asientos se devuelven con los cargos primero, como en un extracto. */
-const ORDEN_DE_ASIENTOS = { amount: "asc" } as const;
+const ENTRY_ORDER = { amount: "asc" } as const;
 
 /** Sentencias fijas, sin nada del usuario dentro. Ver `insert` para el porqué. */
-const ADELANTAR_COMPROBACIONES = "SET CONSTRAINTS ALL IMMEDIATE";
-const VOLVER_A_DIFERIR = "SET CONSTRAINTS ALL DEFERRED";
+const CHECK_CONSTRAINTS_NOW = "SET CONSTRAINTS ALL IMMEDIATE";
+const DEFER_CONSTRAINTS_AGAIN = "SET CONSTRAINTS ALL DEFERRED";
 
 /** Forma mínima de lo que devuelve Prisma; evita atarse a sus tipos generados. */
 interface TransactionRow {
@@ -80,8 +80,8 @@ export class LedgerService {
     await this.assertAccountsExist(this.prisma, draft.entries);
 
     if (draft.idempotencyKey !== undefined) {
-      const previa = await this.byIdempotencyKey(draft.idempotencyKey);
-      if (previa) return this.assertSamePayload(previa, draft);
+      const existing = await this.byIdempotencyKey(draft.idempotencyKey);
+      if (existing) return this.assertSamePayload(existing, draft);
     }
 
     return this.write(draft, null);
@@ -124,11 +124,11 @@ export class LedgerService {
   async balanceOfWithin(tx: LedgerExecutor, accountId: string): Promise<bigint> {
     if (!isUuid(accountId)) throw new UnknownAccountError(accountId);
 
-    const cuenta = await tx.account.findUnique({
+    const account = await tx.account.findUnique({
       where: { id: accountId },
       select: { id: true },
     });
-    if (!cuenta) throw new UnknownAccountError(accountId);
+    if (!account) throw new UnknownAccountError(accountId);
 
     const { _sum } = await tx.entry.aggregate({ _sum: { amount: true }, where: { accountId } });
 
@@ -138,21 +138,21 @@ export class LedgerService {
   async byId(transactionId: string): Promise<PostedTransaction | null> {
     if (!isUuid(transactionId)) return null;
 
-    const fila = await this.prisma.transaction.findUnique({
+    const row = await this.prisma.transaction.findUnique({
       where: { id: transactionId },
-      include: { entries: { orderBy: ORDEN_DE_ASIENTOS } },
+      include: { entries: { orderBy: ENTRY_ORDER } },
     });
 
-    return fila ? toPosted(fila) : null;
+    return row ? toPosted(row) : null;
   }
 
   async byIdempotencyKey(idempotencyKey: string): Promise<PostedTransaction | null> {
-    const fila = await this.prisma.transaction.findUnique({
+    const row = await this.prisma.transaction.findUnique({
       where: { idempotencyKey },
-      include: { entries: { orderBy: ORDEN_DE_ASIENTOS } },
+      include: { entries: { orderBy: ENTRY_ORDER } },
     });
 
-    return fila ? toPosted(fila) : null;
+    return row ? toPosted(row) : null;
   }
 
   /**
@@ -169,18 +169,18 @@ export class LedgerService {
     // Camino rápido para dar un error claro. La garantía de que no se anula dos
     // veces es el índice único sobre `reverses_id`, que se comprueba al
     // escribir: entre esta consulta y la escritura cabe otra petición.
-    const anulacion = await this.prisma.transaction.findUnique({
+    const reversal = await this.prisma.transaction.findUnique({
       where: { reversesId: transactionId },
       select: { id: true },
     });
-    if (anulacion) throw new AlreadyReversedError(transactionId);
+    if (reversal) throw new AlreadyReversedError(transactionId);
 
     return this.write(
       {
         description: description ?? `Anulación de «${original.description}»`,
-        entries: original.entries.map((asiento) => ({
-          accountId: asiento.accountId,
-          amount: -asiento.amount,
+        entries: original.entries.map((entry) => ({
+          accountId: entry.accountId,
+          amount: -entry.amount,
         })),
       },
       transactionId,
@@ -198,15 +198,15 @@ export class LedgerService {
    * transferencia, por ejemplo — tiene que resolver la misma carrera fuera de
    * ella, y no debe reimplementar esta comparación.
    */
-  assertSamePayload(previa: PostedTransaction, draft: TransactionDraft): PostedTransaction {
-    const igual =
-      previa.description === draft.description &&
-      previa.entries.length === draft.entries.length &&
-      huella(previa.entries) === huella(draft.entries);
+  assertSamePayload(existing: PostedTransaction, draft: TransactionDraft): PostedTransaction {
+    const sameRequest =
+      existing.description === draft.description &&
+      existing.entries.length === draft.entries.length &&
+      fingerprint(existing.entries) === fingerprint(draft.entries);
 
-    if (!igual) throw new IdempotencyKeyReusedError(draft.idempotencyKey ?? "");
+    if (!sameRequest) throw new IdempotencyKeyReusedError(draft.idempotencyKey ?? "");
 
-    return previa;
+    return existing;
   }
 
   // ─── interior ──────────────────────────────────────────────────────────────
@@ -217,9 +217,9 @@ export class LedgerService {
     reversesId: string | null,
   ): Promise<PostedTransaction> {
     try {
-      const fila = await this.prisma.$transaction((tx) => this.insert(tx, draft, reversesId));
+      const row = await this.prisma.$transaction((tx) => this.insert(tx, draft, reversesId));
 
-      return toPosted(fila);
+      return toPosted(row);
     } catch (error) {
       return await this.explain(error, draft, reversesId);
     }
@@ -251,27 +251,27 @@ export class LedgerService {
     draft: TransactionDraft,
     reversesId: string | null,
   ): Promise<TransactionRow> {
-    const creada = await tx.transaction.create({
+    const created = await tx.transaction.create({
       data: {
         description: draft.description,
         idempotencyKey: draft.idempotencyKey ?? null,
         reversesId,
         entries: {
           createMany: {
-            data: draft.entries.map((asiento) => ({
-              accountId: asiento.accountId,
-              amount: asiento.amount,
+            data: draft.entries.map((entry) => ({
+              accountId: entry.accountId,
+              amount: entry.amount,
             })),
           },
         },
       },
-      include: { entries: { orderBy: ORDEN_DE_ASIENTOS } },
+      include: { entries: { orderBy: ENTRY_ORDER } },
     });
 
-    await tx.$executeRawUnsafe(ADELANTAR_COMPROBACIONES);
-    await tx.$executeRawUnsafe(VOLVER_A_DIFERIR);
+    await tx.$executeRawUnsafe(CHECK_CONSTRAINTS_NOW);
+    await tx.$executeRawUnsafe(DEFER_CONSTRAINTS_AGAIN);
 
-    return creada;
+    return created;
   }
 
   /**
@@ -289,16 +289,16 @@ export class LedgerService {
     reversesId: string | null,
   ): Promise<PostedTransaction> {
     if (draft.idempotencyKey !== undefined && isUniqueViolationOn(error, "idempotency_key")) {
-      const ganadora = await this.byIdempotencyKey(draft.idempotencyKey);
-      if (ganadora) return this.assertSamePayload(ganadora, draft);
+      const winner = await this.byIdempotencyKey(draft.idempotencyKey);
+      if (winner) return this.assertSamePayload(winner, draft);
     }
 
     if (reversesId !== null && isUniqueViolationOn(error, "reverses_id")) {
       throw new AlreadyReversedError(reversesId);
     }
 
-    const fallo = readPostgresFailure(error);
-    if (fallo) throw new LedgerInvariantViolatedError(fallo.message);
+    const failure = readPostgresFailure(error);
+    if (failure) throw new LedgerInvariantViolatedError(failure.message);
 
     throw error;
   }
@@ -309,49 +309,49 @@ export class LedgerService {
       throw new InsufficientEntriesError(draft.entries.length);
     }
 
-    const enCero = draft.entries.find((asiento) => asiento.amount === 0n);
-    if (enCero) throw new ZeroAmountError(enCero.accountId);
+    const zeroed = draft.entries.find((entry) => entry.amount === 0n);
+    if (zeroed) throw new ZeroAmountError(zeroed.accountId);
 
-    const descuadre = draft.entries.reduce((suma, asiento) => suma + asiento.amount, 0n);
-    if (descuadre !== 0n) throw new UnbalancedTransactionError(descuadre);
+    const imbalance = draft.entries.reduce((sum, entry) => sum + entry.amount, 0n);
+    if (imbalance !== 0n) throw new UnbalancedTransactionError(imbalance);
   }
 
   private async assertAccountsExist(tx: LedgerExecutor, entries: EntryDraft[]): Promise<void> {
-    const ids = [...new Set(entries.map((asiento) => asiento.accountId))];
+    const ids = [...new Set(entries.map((entry) => entry.accountId))];
 
-    const malFormado = ids.find((id) => !isUuid(id));
-    if (malFormado !== undefined) throw new UnknownAccountError(malFormado);
+    const malformed = ids.find((id) => !isUuid(id));
+    if (malformed !== undefined) throw new UnknownAccountError(malformed);
 
-    const existentes = await tx.account.findMany({
+    const existing = await tx.account.findMany({
       where: { id: { in: ids } },
       select: { id: true },
     });
-    if (existentes.length === ids.length) return;
+    if (existing.length === ids.length) return;
 
-    const encontradas = new Set(existentes.map((cuenta) => cuenta.id));
-    throw new UnknownAccountError(ids.find((id) => !encontradas.has(id)) ?? ids.join(", "));
+    const found = new Set(existing.map((account) => account.id));
+    throw new UnknownAccountError(ids.find((id) => !found.has(id)) ?? ids.join(", "));
   }
 }
 
-function toPosted(fila: TransactionRow): PostedTransaction {
+function toPosted(row: TransactionRow): PostedTransaction {
   return {
-    id: fila.id,
-    description: fila.description,
-    idempotencyKey: fila.idempotencyKey,
-    reversesId: fila.reversesId,
-    createdAt: fila.createdAt,
-    entries: fila.entries.map((asiento) => ({
-      id: asiento.id,
-      accountId: asiento.accountId,
-      amount: asiento.amount,
+    id: row.id,
+    description: row.description,
+    idempotencyKey: row.idempotencyKey,
+    reversesId: row.reversesId,
+    createdAt: row.createdAt,
+    entries: row.entries.map((entry) => ({
+      id: entry.id,
+      accountId: entry.accountId,
+      amount: entry.amount,
     })),
   };
 }
 
 /** Identidad de un conjunto de asientos, sin depender del orden en que lleguen. */
-function huella(entries: { accountId: string; amount: bigint }[]): string {
+function fingerprint(entries: { accountId: string; amount: bigint }[]): string {
   return entries
-    .map((asiento) => `${asiento.accountId}:${asiento.amount}`)
+    .map((entry) => `${entry.accountId}:${entry.amount}`)
     .sort()
     .join("|");
 }

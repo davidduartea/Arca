@@ -23,7 +23,7 @@ import type { TransferOrder } from "./transfers.types";
  * cuanto hay contención de verdad, y el fallo que dan no se distingue de un
  * error real.
  */
-const ESPERA = { maxWait: 10_000, timeout: 20_000 } as const;
+const WAIT_LIMITS = { maxWait: 10_000, timeout: 20_000 } as const;
 
 /**
  * Mover dinero entre cuentas.
@@ -79,8 +79,8 @@ export class TransfersService {
     // Camino rápido: si la clave ya se usó no hay nada que bloquear ni que
     // escribir. Ahorra la transacción entera en el caso normal de un reintento.
     if (draft.idempotencyKey !== undefined) {
-      const previa = await this.ledger.byIdempotencyKey(draft.idempotencyKey);
-      if (previa) return this.ledger.assertSamePayload(previa, draft);
+      const existing = await this.ledger.byIdempotencyKey(draft.idempotencyKey);
+      if (existing) return this.ledger.assertSamePayload(existing, draft);
     }
 
     try {
@@ -89,7 +89,7 @@ export class TransfersService {
         await this.assertSufficientFunds(tx, order.fromAccountId, order.amount);
 
         return this.ledger.postWithin(tx, draft);
-      }, ESPERA);
+      }, WAIT_LIMITS);
     } catch (error) {
       return await this.recoverFromReplay(error, draft);
     }
@@ -106,18 +106,18 @@ export class TransfersService {
     accountId: string,
     amount: bigint,
   ): Promise<void> {
-    const cuenta = await tx.account.findUnique({
+    const account = await tx.account.findUnique({
       where: { id: accountId },
       select: { kind: true },
     });
-    if (!cuenta) throw new UnknownAccountError(accountId);
+    if (!account) throw new UnknownAccountError(accountId);
 
     // Las cuentas de sistema son el mundo exterior: de ahí sale el dinero que
     // entra al libro, así que están en negativo por definición.
-    if (cuenta.kind === "SYSTEM") return;
+    if (account.kind === "SYSTEM") return;
 
-    const saldo = await this.ledger.balanceOfWithin(tx, accountId);
-    if (saldo < amount) throw new InsufficientFundsError(accountId, saldo, amount);
+    const balance = await this.ledger.balanceOfWithin(tx, accountId);
+    if (balance < amount) throw new InsufficientFundsError(accountId, balance, amount);
   }
 
   /**
@@ -135,8 +135,8 @@ export class TransfersService {
     draft: TransactionDraft,
   ): Promise<PostedTransaction> {
     if (draft.idempotencyKey !== undefined && isUniqueViolationOn(error, "idempotency_key")) {
-      const ganadora = await this.ledger.byIdempotencyKey(draft.idempotencyKey);
-      if (ganadora) return this.ledger.assertSamePayload(ganadora, draft);
+      const winner = await this.ledger.byIdempotencyKey(draft.idempotencyKey);
+      if (winner) return this.ledger.assertSamePayload(winner, draft);
     }
 
     throw error;

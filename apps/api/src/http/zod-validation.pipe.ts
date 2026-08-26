@@ -15,16 +15,16 @@ export class ZodValidationPipe<T> implements PipeTransform<unknown, T> {
   constructor(private readonly schema: ZodType<T>) {}
 
   transform(value: unknown): T {
-    const resultado = this.schema.safeParse(value);
-    if (resultado.success) return resultado.data;
+    const result = this.schema.safeParse(value);
+    if (result.success) return result.data;
 
     // Se devuelven todos los problemas de una vez. Corregir a ciegas, error a
     // error, es innecesariamente lento cuando el validador ya los vio todos.
     throw new BadRequestException({
       message: "Los datos enviados no son válidos",
-      issues: resultado.error.issues.map((problema) => ({
-        field: problema.path.join(".") || "(raíz)",
-        message: problema.message,
+      issues: result.error.issues.map((issue) => ({
+        field: issue.path.join(".") || "(raíz)",
+        message: issue.message,
       })),
     });
   }
