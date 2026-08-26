@@ -4,6 +4,7 @@ import type { TestingModule } from "@nestjs/testing";
 import { AccountsModule } from "../accounts/accounts.module";
 import { LedgerModule } from "../ledger/ledger.module";
 import { DATABASE_URL, PrismaService } from "../prisma/prisma.service";
+import { StatementsModule } from "../statements/statements.module";
 import { TransfersModule } from "../transfers/transfers.module";
 import { TEST_DATABASE_URL } from "./database-url";
 
@@ -15,7 +16,7 @@ import { TEST_DATABASE_URL } from "./database-url";
  */
 export async function createTestingModule(): Promise<TestingModule> {
   const modulo = await Test.createTestingModule({
-    imports: [AccountsModule, LedgerModule, TransfersModule],
+    imports: [AccountsModule, LedgerModule, StatementsModule, TransfersModule],
   })
     .overrideProvider(DATABASE_URL)
     .useValue(TEST_DATABASE_URL)
