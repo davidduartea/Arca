@@ -68,26 +68,24 @@ porque se le cayó la red, no se cobra dos veces.
 
 **Fase 0 · esquema e invariante** — hecho
 **Fase 1 · motor de asientos** — hecho
+**Fase 2 · transferencias y concurrencia** — hecho
 
-53 tests contra Postgres de verdad, no contra dobles. No es purismo: buena parte
+76 tests contra Postgres de verdad, no contra dobles. No es purismo: buena parte
 de lo que hay que probar **es** la base, y un doble no tiene triggers. Un test
 que pasara con un doble no diría nada sobre si el libro cuadra.
 
 El motor registra movimientos, deriva saldos e invierte transacciones para
-corregir errores. Dos cosas que deliberadamente **no** hace: guardar saldos, y
-decidir si un movimiento está permitido. Lo segundo es una política, no
-contabilidad, y llega en la fase 2 junto con el bloqueo que la hace correcta
-bajo concurrencia — comprobar el saldo y escribir sin bloquear la fila es justo
-el error que la fase 2 existe para demostrar.
+corregir errores. No guarda saldos y no decide si un movimiento está permitido:
+eso es una política, y vive en `TransfersService`, que la aplica con la cuenta
+bloqueada.
 
 Lo que viene:
 
-| Fase | Qué                                                                                    |
-| ---- | -------------------------------------------------------------------------------------- |
-| 2    | Transferencias, idempotencia y **concurrencia** — el test de las cincuenta en paralelo |
-| 3    | Extracto con paginación por cursor y saldo a fecha                                     |
-| 4    | Interfaz                                                                               |
-| 5    | Auditoría y conciliación                                                               |
+| Fase | Qué                                                |
+| ---- | -------------------------------------------------- |
+| 3    | Extracto con paginación por cursor y saldo a fecha |
+| 4    | Interfaz                                           |
+| 5    | Auditoría y conciliación                           |
 
 ### Lo que costó averiguar
 
@@ -109,11 +107,34 @@ error de sentencia normal, con su SQLSTATE y con el mensaje del trigger entero.
 
 ### El test que define el proyecto
 
-Fase 2, y es el que separa a quien ha pensado el problema de quien no:
-
 > Una cuenta con $100. Cincuenta transferencias de $10 **en paralelo**.
 > Exactamente diez tienen éxito, cuarenta fallan, el saldo queda en cero y
 > nunca en negativo.
+
+Pasa. Y para asegurarme de que pasa por el motivo correcto, lo corrí quitando el
+bloqueo: **salen quince** en vez de diez, y la cuenta acaba en -$50.
+
+Que no salgan las cincuenta es lo interesante. El pool de conexiones serializa
+parte de la carrera por accidente, así que una implementación ingenua parece
+correcta mientras se prueba a mano y falla en producción, con volumen, sin dejar
+un error que apunte a la causa.
+
+Lo que lo arregla es coger la fila de la cuenta antes de leer el saldo:
+
+```sql
+SELECT id FROM accounts WHERE id = $1 FOR UPDATE
+```
+
+La fila no guarda ningún saldo. Se bloquea **por su identidad**, como quien coge
+una llave: quien la tiene lee y escribe sin que nadie se cuele, y los demás
+esperan y vuelven a leer ya con lo que escribió el anterior. El bloqueo y la
+escritura van en la misma transacción — si fueran dos, se soltaría antes de
+escribir y no serviría de nada.
+
+Y las llaves se cogen **siempre en el mismo orden**, ordenadas por id. Sin eso,
+una transferencia A→B y otra B→A a la vez se quedan esperándose: cada una tiene
+la que la otra necesita. Postgres detecta el interbloqueo y mata a una, así que
+el síntoma no sería un cuelgue sino un fallo intermitente e inexplicable.
 
 ---
 

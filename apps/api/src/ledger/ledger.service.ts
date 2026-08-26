@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 
 import { isUniqueViolationOn, readPostgresFailure } from "../prisma/postgres-errors";
 import { PrismaService } from "../prisma/prisma.service";
@@ -15,11 +16,23 @@ import {
 } from "./ledger.errors";
 import type { EntryDraft, PostedTransaction, TransactionDraft } from "./ledger.types";
 
+/**
+ * Quien ejecuta las consultas: el cliente normal o el de una transacción que ya
+ * abrió otro.
+ *
+ * Es lo que permite que una transferencia bloquee las cuentas y escriba los
+ * asientos dentro de **la misma** transacción de base de datos. Si fueran dos
+ * transacciones distintas, el bloqueo se soltaría antes de escribir y no
+ * serviría de nada.
+ */
+export type LedgerExecutor = Prisma.TransactionClient;
+
 /** Los asientos se devuelven con los cargos primero, como en un extracto. */
 const ORDEN_DE_ASIENTOS = { amount: "asc" } as const;
 
-/** Sentencia fija, sin nada del usuario dentro. Ver `write` para el porqué. */
+/** Sentencias fijas, sin nada del usuario dentro. Ver `insert` para el porqué. */
 const ADELANTAR_COMPROBACIONES = "SET CONSTRAINTS ALL IMMEDIATE";
+const VOLVER_A_DIFERIR = "SET CONSTRAINTS ALL DEFERRED";
 
 /** Forma mínima de lo que devuelve Prisma; evita atarse a sus tipos generados. */
 interface TransactionRow {
@@ -40,10 +53,8 @@ interface TransactionRow {
  * **No decide si un movimiento está permitido.** El motor no comprueba si una
  * cuenta se queda en descubierto. Un libro contable registra lo que pasó; que
  * un movimiento deba permitirse es una política, y las políticas viven en el
- * caso de uso que las aplica. La regla llega en la fase 2, junto con el bloqueo
- * que la hace correcta bajo concurrencia: comprobar el saldo y escribir sin
- * bloquear la fila es justo el error que la fase 2 existe para demostrar, así
- * que no se escribe aquí a medias.
+ * caso de uso que las aplica — `TransfersService` es quien la aplica, y lo hace
+ * con la cuenta bloqueada.
  *
  * **No guarda saldos.** `balanceOf` los suma cada vez. Es O(n) sobre los
  * asientos de la cuenta y con el tiempo se nota; la respuesta no es un campo
@@ -66,14 +77,30 @@ export class LedgerService {
    */
   async post(draft: TransactionDraft): Promise<PostedTransaction> {
     this.assertDraftIsSound(draft);
-    await this.assertAccountsExist(draft.entries);
+    await this.assertAccountsExist(this.prisma, draft.entries);
 
     if (draft.idempotencyKey !== undefined) {
-      const previa = await this.findByIdempotencyKey(draft.idempotencyKey);
+      const previa = await this.byIdempotencyKey(draft.idempotencyKey);
       if (previa) return this.assertSamePayload(previa, draft);
     }
 
     return this.write(draft, null);
+  }
+
+  /**
+   * Como `post`, pero dentro de una transacción que abrió otro.
+   *
+   * La diferencia no es cosmética: aquí **no se puede recuperar de un fallo**.
+   * En Postgres, una sentencia que falla aborta la transacción entera, y a
+   * partir de ese punto cualquier consulta responde «current transaction is
+   * aborted». Atrapar el error aquí y seguir no funcionaría; quien abrió la
+   * transacción es quien tiene que dejarla caer y decidir qué hacer fuera.
+   */
+  async postWithin(tx: LedgerExecutor, draft: TransactionDraft): Promise<PostedTransaction> {
+    this.assertDraftIsSound(draft);
+    await this.assertAccountsExist(tx, draft.entries);
+
+    return toPosted(await this.insert(tx, draft, null));
   }
 
   /**
@@ -84,18 +111,26 @@ export class LedgerService {
    * una cuenta recién abierta. En un libro contable eso no es un detalle.
    */
   async balanceOf(accountId: string): Promise<bigint> {
+    return this.balanceOfWithin(this.prisma, accountId);
+  }
+
+  /**
+   * El saldo dentro de una transacción abierta.
+   *
+   * Es el que usa una transferencia después de bloquear la cuenta: leer el
+   * saldo fuera del bloqueo daría un número que puede haber cambiado para
+   * cuando se escriba.
+   */
+  async balanceOfWithin(tx: LedgerExecutor, accountId: string): Promise<bigint> {
     if (!isUuid(accountId)) throw new UnknownAccountError(accountId);
 
-    const cuenta = await this.prisma.account.findUnique({
+    const cuenta = await tx.account.findUnique({
       where: { id: accountId },
       select: { id: true },
     });
     if (!cuenta) throw new UnknownAccountError(accountId);
 
-    const { _sum } = await this.prisma.entry.aggregate({
-      _sum: { amount: true },
-      where: { accountId },
-    });
+    const { _sum } = await tx.entry.aggregate({ _sum: { amount: true }, where: { accountId } });
 
     return _sum.amount ?? 0n;
   }
@@ -105,6 +140,15 @@ export class LedgerService {
 
     const fila = await this.prisma.transaction.findUnique({
       where: { id: transactionId },
+      include: { entries: { orderBy: ORDEN_DE_ASIENTOS } },
+    });
+
+    return fila ? toPosted(fila) : null;
+  }
+
+  async byIdempotencyKey(idempotencyKey: string): Promise<PostedTransaction | null> {
+    const fila = await this.prisma.transaction.findUnique({
+      where: { idempotencyKey },
       include: { entries: { orderBy: ORDEN_DE_ASIENTOS } },
     });
 
@@ -143,62 +187,91 @@ export class LedgerService {
     );
   }
 
+  /**
+   * Reintentar con la misma clave tiene que pedir lo mismo.
+   *
+   * Devolver la transacción original ante un contenido distinto sería mentir:
+   * el cliente pidió otra cosa y se iría creyendo que se hizo. Crear una nueva
+   * rompería la promesa de la clave. Sólo queda el error.
+   *
+   * Es público porque quien escribe dentro de su propia transacción — una
+   * transferencia, por ejemplo — tiene que resolver la misma carrera fuera de
+   * ella, y no debe reimplementar esta comparación.
+   */
+  assertSamePayload(previa: PostedTransaction, draft: TransactionDraft): PostedTransaction {
+    const igual =
+      previa.description === draft.description &&
+      previa.entries.length === draft.entries.length &&
+      huella(previa.entries) === huella(draft.entries);
+
+    if (!igual) throw new IdempotencyKeyReusedError(draft.idempotencyKey ?? "");
+
+    return previa;
+  }
+
   // ─── interior ──────────────────────────────────────────────────────────────
 
-  /**
-   * La única escritura del motor.
-   *
-   * La transacción y sus asientos se escriben juntos, en una sola transacción
-   * de base de datos. Eso es lo que hace funcionar al trigger diferido: la
-   * comprobación de que los asientos suman cero se aplaza hasta el final,
-   * cuando ya están todos. Si fueran escrituras sueltas, la primera fallaría
-   * siempre — al insertar el primer asiento la suma todavía no es cero.
-   *
-   * El `SET CONSTRAINTS ALL IMMEDIATE` del final no es un adorno. Si se deja
-   * que la comprobación salte en el `COMMIT`, **Prisma pierde el motivo**:
-   * Postgres cierra la transacción al rechazar el commit, Prisma intenta un
-   * `ROLLBACK` sobre algo ya cerrado y reporta ese fallo secundario
-   * («Transaction already closed») en lugar de la violación real. El error que
-   * llegaría al dominio no diría nada.
-   *
-   * Adelantar la comprobación al final de nuestra unidad de trabajo la
-   * convierte en un error de sentencia normal, con su SQLSTATE y con el
-   * mensaje que escribe el trigger. La restricción sigue siendo diferida; lo
-   * único que cambia es que cerramos la ventana nosotros en vez de esperar al
-   * `COMMIT`.
-   */
+  /** Abre una transacción propia y traduce lo que salga mal. */
   private async write(
     draft: TransactionDraft,
     reversesId: string | null,
   ): Promise<PostedTransaction> {
     try {
-      const fila = await this.prisma.$transaction(async (tx) => {
-        const creada = await tx.transaction.create({
-          data: {
-            description: draft.description,
-            idempotencyKey: draft.idempotencyKey ?? null,
-            reversesId,
-            entries: {
-              createMany: {
-                data: draft.entries.map((asiento) => ({
-                  accountId: asiento.accountId,
-                  amount: asiento.amount,
-                })),
-              },
-            },
-          },
-          include: { entries: { orderBy: ORDEN_DE_ASIENTOS } },
-        });
-
-        await tx.$executeRawUnsafe(ADELANTAR_COMPROBACIONES);
-
-        return creada;
-      });
+      const fila = await this.prisma.$transaction((tx) => this.insert(tx, draft, reversesId));
 
       return toPosted(fila);
     } catch (error) {
       return await this.explain(error, draft, reversesId);
     }
+  }
+
+  /**
+   * La escritura, sin transacción propia.
+   *
+   * La transacción y sus asientos se escriben juntos: eso es lo que hace
+   * funcionar al trigger diferido, porque la comprobación de que los asientos
+   * suman cero se aplaza hasta el final, cuando ya están todos. Si fueran
+   * escrituras sueltas, la primera fallaría siempre — al insertar el primer
+   * asiento la suma todavía no es cero.
+   *
+   * El `SET CONSTRAINTS ALL IMMEDIATE` no es un adorno. Si se deja que la
+   * comprobación salte en el `COMMIT`, **Prisma pierde el motivo**: Postgres
+   * cierra la transacción al rechazar el commit, Prisma intenta un `ROLLBACK`
+   * sobre algo ya cerrado y reporta ese fallo secundario («Transaction already
+   * closed») en lugar de la violación real. El error que llegaría al dominio no
+   * diría nada.
+   *
+   * Y el `ALL DEFERRED` de después devuelve la transacción a como estaba. El
+   * modo dura hasta el final de la transacción, así que sin restaurarlo un
+   * segundo movimiento escrito en la misma transacción fallaría al insertar su
+   * primer asiento — que es justo lo que la restricción diferida evita.
+   */
+  private async insert(
+    tx: LedgerExecutor,
+    draft: TransactionDraft,
+    reversesId: string | null,
+  ): Promise<TransactionRow> {
+    const creada = await tx.transaction.create({
+      data: {
+        description: draft.description,
+        idempotencyKey: draft.idempotencyKey ?? null,
+        reversesId,
+        entries: {
+          createMany: {
+            data: draft.entries.map((asiento) => ({
+              accountId: asiento.accountId,
+              amount: asiento.amount,
+            })),
+          },
+        },
+      },
+      include: { entries: { orderBy: ORDEN_DE_ASIENTOS } },
+    });
+
+    await tx.$executeRawUnsafe(ADELANTAR_COMPROBACIONES);
+    await tx.$executeRawUnsafe(VOLVER_A_DIFERIR);
+
+    return creada;
   }
 
   /**
@@ -216,7 +289,7 @@ export class LedgerService {
     reversesId: string | null,
   ): Promise<PostedTransaction> {
     if (draft.idempotencyKey !== undefined && isUniqueViolationOn(error, "idempotency_key")) {
-      const ganadora = await this.findByIdempotencyKey(draft.idempotencyKey);
+      const ganadora = await this.byIdempotencyKey(draft.idempotencyKey);
       if (ganadora) return this.assertSamePayload(ganadora, draft);
     }
 
@@ -243,13 +316,13 @@ export class LedgerService {
     if (descuadre !== 0n) throw new UnbalancedTransactionError(descuadre);
   }
 
-  private async assertAccountsExist(entries: EntryDraft[]): Promise<void> {
+  private async assertAccountsExist(tx: LedgerExecutor, entries: EntryDraft[]): Promise<void> {
     const ids = [...new Set(entries.map((asiento) => asiento.accountId))];
 
     const malFormado = ids.find((id) => !isUuid(id));
     if (malFormado !== undefined) throw new UnknownAccountError(malFormado);
 
-    const existentes = await this.prisma.account.findMany({
+    const existentes = await tx.account.findMany({
       where: { id: { in: ids } },
       select: { id: true },
     });
@@ -257,38 +330,6 @@ export class LedgerService {
 
     const encontradas = new Set(existentes.map((cuenta) => cuenta.id));
     throw new UnknownAccountError(ids.find((id) => !encontradas.has(id)) ?? ids.join(", "));
-  }
-
-  private async findByIdempotencyKey(
-    idempotencyKey: string,
-  ): Promise<PostedTransaction | null> {
-    const fila = await this.prisma.transaction.findUnique({
-      where: { idempotencyKey },
-      include: { entries: { orderBy: ORDEN_DE_ASIENTOS } },
-    });
-
-    return fila ? toPosted(fila) : null;
-  }
-
-  /**
-   * Reintentar con la misma clave tiene que pedir lo mismo.
-   *
-   * Devolver la transacción original ante un contenido distinto sería mentir:
-   * el cliente pidió otra cosa y se iría creyendo que se hizo. Crear una nueva
-   * rompería la promesa de la clave. Sólo queda el error.
-   */
-  private assertSamePayload(
-    previa: PostedTransaction,
-    draft: TransactionDraft,
-  ): PostedTransaction {
-    const igual =
-      previa.description === draft.description &&
-      previa.entries.length === draft.entries.length &&
-      huella(previa.entries) === huella(draft.entries);
-
-    if (!igual) throw new IdempotencyKeyReusedError(draft.idempotencyKey ?? "");
-
-    return previa;
   }
 }
 
