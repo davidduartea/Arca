@@ -18,23 +18,23 @@ import {
  */
 describe("readPostgresFailure", () => {
   it("saca el SQLSTATE y el mensaje que escribe el trigger", () => {
-    const fallo = readPostgresFailure(errorDeTrigger());
+    const failure = readPostgresFailure(triggerError());
 
-    expect(fallo?.code).toBe(PG_CHECK_VIOLATION);
-    expect(fallo?.message).toContain("descuadra en -2000 centavos");
+    expect(failure?.code).toBe(PG_CHECK_VIOLATION);
+    expect(failure?.message).toContain("descuadra en -2000 centavos");
   });
 
   it("saca la unicidad y la columna que la provocó", () => {
-    const fallo = readPostgresFailure(errorDeUnicidad());
+    const failure = readPostgresFailure(uniqueViolationError());
 
-    expect(fallo?.code).toBe(PG_UNIQUE_VIOLATION);
-    expect(fallo?.constraint).toBe("idempotency_key");
+    expect(failure?.code).toBe(PG_UNIQUE_VIOLATION);
+    expect(failure?.constraint).toBe("idempotency_key");
   });
 
   it("entiende un error de `pg` a pelo, sin Prisma de por medio", () => {
     // Es lo que se ve al usar el driver directamente, como en el arranque de
     // los tests: ahí el código y la restricción están en la raíz.
-    const fallo = readPostgresFailure(
+    const failure = readPostgresFailure(
       Object.assign(
         new Error('duplicate key value violates unique constraint "accounts_pkey"'),
         {
@@ -44,26 +44,26 @@ describe("readPostgresFailure", () => {
       ),
     );
 
-    expect(fallo?.code).toBe(PG_UNIQUE_VIOLATION);
-    expect(fallo?.constraint).toBe("accounts_pkey");
+    expect(failure?.code).toBe(PG_UNIQUE_VIOLATION);
+    expect(failure?.constraint).toBe("accounts_pkey");
   });
 
   it("cae en el código propio de Prisma cuando el adaptador no dejó nada", () => {
-    const fallo = readPostgresFailure(
+    const failure = readPostgresFailure(
       Object.assign(new Error("Unique constraint failed"), {
         code: "P2002",
         meta: { target: ["idempotency_key"] },
       }),
     );
 
-    expect(fallo?.code).toBe(PG_UNIQUE_VIOLATION);
-    expect(fallo?.constraint).toBe("idempotency_key");
+    expect(failure?.code).toBe(PG_UNIQUE_VIOLATION);
+    expect(failure?.constraint).toBe("idempotency_key");
   });
 
   it("deja el motivo sin código cuando Prisma lo enmascara", () => {
     // El caso que obliga al servicio a adelantar las comprobaciones: si la
     // restricción diferida salta en el COMMIT, esto es todo lo que llega.
-    const fallo = readPostgresFailure(
+    const failure = readPostgresFailure(
       Object.assign(
         new Error(
           "Transaction API error: Transaction already closed: A rollback cannot be executed",
@@ -72,8 +72,8 @@ describe("readPostgresFailure", () => {
       ),
     );
 
-    expect(fallo?.code).toBeUndefined();
-    expect(fallo?.message).toContain("already closed");
+    expect(failure?.code).toBeUndefined();
+    expect(failure?.message).toContain("already closed");
   });
 
   it("devuelve undefined para lo que ni siquiera es un error", () => {
@@ -86,15 +86,15 @@ describe("readPostgresFailure", () => {
 
 describe("isUniqueViolationOn", () => {
   it("reconoce la columna que chocó", () => {
-    expect(isUniqueViolationOn(errorDeUnicidad(), "idempotency_key")).toBe(true);
+    expect(isUniqueViolationOn(uniqueViolationError(), "idempotency_key")).toBe(true);
   });
 
   it("no confunde una columna con otra", () => {
-    expect(isUniqueViolationOn(errorDeUnicidad(), "reverses_id")).toBe(false);
+    expect(isUniqueViolationOn(uniqueViolationError(), "reverses_id")).toBe(false);
   });
 
   it("no toma por unicidad lo que es un trigger", () => {
-    expect(isUniqueViolationOn(errorDeTrigger(), "idempotency_key")).toBe(false);
+    expect(isUniqueViolationOn(triggerError(), "idempotency_key")).toBe(false);
   });
 
   it("aguanta que le pasen cualquier cosa", () => {
@@ -104,7 +104,7 @@ describe("isUniqueViolationOn", () => {
 });
 
 /** Capturado de un `INSERT` que violó el trigger `entries_must_balance`. */
-function errorDeTrigger(): unknown {
+function triggerError(): unknown {
   return Object.assign(new Error("Raw query failed. Code: `23514`."), {
     code: "P2010",
     meta: {
@@ -124,7 +124,7 @@ function errorDeTrigger(): unknown {
 }
 
 /** Capturado de un `INSERT` que repitió la clave de idempotencia. */
-function errorDeUnicidad(): unknown {
+function uniqueViolationError(): unknown {
   return Object.assign(
     new Error("Unique constraint failed on the fields: (`idempotency_key`)"),
     {

@@ -6,7 +6,7 @@ import type { AuthenticatedRequest } from "./current-user.decorator";
 import { IS_PUBLIC } from "./public.decorator";
 import { TokenService } from "./token.service";
 
-const ESQUEMA = "Bearer ";
+const SCHEME = "Bearer ";
 
 /**
  * Deja pasar sólo a quien traiga un token válido.
@@ -23,14 +23,14 @@ export class JwtAuthGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const abierto = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC, [
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC, [
       context.getHandler(),
       context.getClass(),
     ]);
-    if (abierto === true) return true;
+    if (isPublic === true) return true;
 
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
-    const token = leerToken(request);
+    const token = readToken(request);
     if (token === null) throw new UnauthorizedException("Falta el token de acceso");
 
     try {
@@ -46,11 +46,11 @@ export class JwtAuthGuard implements CanActivate {
   }
 }
 
-function leerToken(request: AuthenticatedRequest): string | null {
-  const cabecera = request.headers["authorization"];
-  if (typeof cabecera !== "string" || !cabecera.startsWith(ESQUEMA)) return null;
+function readToken(request: AuthenticatedRequest): string | null {
+  const header = request.headers["authorization"];
+  if (typeof header !== "string" || !header.startsWith(SCHEME)) return null;
 
-  const token = cabecera.slice(ESQUEMA.length).trim();
+  const token = header.slice(SCHEME.length).trim();
 
   return token.length > 0 ? token : null;
 }

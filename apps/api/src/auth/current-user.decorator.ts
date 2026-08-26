@@ -16,7 +16,7 @@ export interface AuthenticatedRequest {
  * controlador se invente la identidad leyendo un parámetro o una cabecera.
  */
 export const CurrentUser = createParamDecorator(
-  (_datos: unknown, context: ExecutionContext): AuthenticatedUser => {
+  (_data: unknown, context: ExecutionContext): AuthenticatedUser => {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     if (!request.user) {
       throw new Error("No hay usuario en la petición: ¿falta el guardia?");

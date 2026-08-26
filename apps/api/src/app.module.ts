@@ -11,11 +11,11 @@ import { StatementsModule } from "./statements/statements.module";
 import { TransfersModule } from "./transfers/transfers.module";
 
 /** Un techo general para que nadie pueda martillear la API. */
-const LIMITE_GENERAL = { name: "default", ttl: 60_000, limit: 120 };
+const GLOBAL_RATE_LIMIT = { name: "default", ttl: 60_000, limit: 120 };
 
 @Module({
   imports: [
-    ThrottlerModule.forRoot({ throttlers: [LIMITE_GENERAL] }),
+    ThrottlerModule.forRoot({ throttlers: [GLOBAL_RATE_LIMIT] }),
     AccountsModule,
     AuthModule,
     LedgerModule,

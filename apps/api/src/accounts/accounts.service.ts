@@ -40,8 +40,8 @@ export class AccountsService {
   async byId(accountId: string): Promise<Account | null> {
     if (!isUuid(accountId)) return null;
 
-    const fila = await this.prisma.account.findUnique({ where: { id: accountId } });
-    return fila ? toAccount(fila) : null;
+    const row = await this.prisma.account.findUnique({ where: { id: accountId } });
+    return row ? toAccount(row) : null;
   }
 
   /**
@@ -53,31 +53,31 @@ export class AccountsService {
    * identificadores no tiene por qué averiguarlo.
    */
   async requireOwnedBy(accountId: string, ownerId: string): Promise<Account> {
-    const cuenta = await this.byId(accountId);
-    if (!cuenta) throw new UnknownAccountError(accountId);
-    if (cuenta.ownerId !== ownerId) throw new NotYourAccountError(accountId);
+    const account = await this.byId(accountId);
+    if (!account) throw new UnknownAccountError(accountId);
+    if (account.ownerId !== ownerId) throw new NotYourAccountError(accountId);
 
-    return cuenta;
+    return account;
   }
 
   async byOwner(ownerId: string): Promise<Account[]> {
     if (!isUuid(ownerId)) return [];
 
-    const filas = await this.prisma.account.findMany({
+    const rows = await this.prisma.account.findMany({
       where: { ownerId },
       orderBy: { createdAt: "asc" },
     });
 
-    return filas.map(toAccount);
+    return rows.map(toAccount);
   }
 }
 
-function toAccount(fila: AccountRow): Account {
+function toAccount(row: AccountRow): Account {
   return {
-    id: fila.id,
-    ownerId: fila.ownerId,
-    name: fila.name,
-    kind: fila.kind === "SYSTEM" ? "SYSTEM" : "USER",
-    createdAt: fila.createdAt,
+    id: row.id,
+    ownerId: row.ownerId,
+    name: row.name,
+    kind: row.kind === "SYSTEM" ? "SYSTEM" : "USER",
+    createdAt: row.createdAt,
   };
 }

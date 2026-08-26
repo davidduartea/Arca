@@ -10,18 +10,18 @@ import { createOwner, createTestingModule, truncateAll } from "../test/database"
 import { AccountsService } from "./accounts.service";
 
 describe("AccountsService", () => {
-  let modulo: TestingModule;
+  let moduleRef: TestingModule;
   let accounts: AccountsService;
   let prisma: PrismaService;
 
   beforeAll(async () => {
-    modulo = await createTestingModule();
-    accounts = modulo.get(AccountsService);
-    prisma = modulo.get(PrismaService);
+    moduleRef = await createTestingModule();
+    accounts = moduleRef.get(AccountsService);
+    prisma = moduleRef.get(PrismaService);
   });
 
   afterAll(async () => {
-    await modulo.close();
+    await moduleRef.close();
   });
 
   beforeEach(async () => {
@@ -29,31 +29,31 @@ describe("AccountsService", () => {
   });
 
   it("abre una cuenta de persona por defecto", async () => {
-    const cuenta = await accounts.open({
+    const account = await accounts.open({
       ownerId: await createOwner(prisma),
       name: "Cuenta corriente",
     });
 
-    expect(cuenta.kind).toBe("USER");
-    expect(cuenta.name).toBe("Cuenta corriente");
+    expect(account.kind).toBe("USER");
+    expect(account.name).toBe("Cuenta corriente");
   });
 
   it("abre cuentas de sistema cuando se le pide", async () => {
     // Un ingreso desde fuera tiene que salir de algún sitio: sale de una de
     // éstas, que sí puede quedar en negativo.
-    const cuenta = await accounts.open({
+    const account = await accounts.open({
       ownerId: await createOwner(prisma),
       name: "Mundo exterior",
       kind: "SYSTEM",
     });
 
-    expect(cuenta.kind).toBe("SYSTEM");
+    expect(account.kind).toBe("SYSTEM");
   });
 
   it("la encuentra por su id", async () => {
-    const abierta = await accounts.open({ ownerId: await createOwner(prisma), name: "Ahorro" });
+    const opened = await accounts.open({ ownerId: await createOwner(prisma), name: "Ahorro" });
 
-    expect((await accounts.byId(abierta.id))?.name).toBe("Ahorro");
+    expect((await accounts.byId(opened.id))?.name).toBe("Ahorro");
   });
 
   it("devuelve null cuando no existe o el id no es un uuid", async () => {
@@ -66,10 +66,10 @@ describe("AccountsService", () => {
 
   describe("requireOwnedBy", () => {
     it("devuelve la cuenta a su dueño", async () => {
-      const dueno = await createOwner(prisma);
-      const cuenta = await accounts.open({ ownerId: dueno, name: "Ahorro" });
+      const owner = await createOwner(prisma);
+      const account = await accounts.open({ ownerId: owner, name: "Ahorro" });
 
-      expect((await accounts.requireOwnedBy(cuenta.id, dueno)).name).toBe("Ahorro");
+      expect((await accounts.requireOwnedBy(account.id, owner)).name).toBe("Ahorro");
     });
 
     it("una cuenta que no existe es un error", async () => {
@@ -81,26 +81,26 @@ describe("AccountsService", () => {
     it("distingue «no existe» de «no es tuya»", async () => {
       // El dominio los separa porque para registrar y depurar son cosas
       // distintas. La capa HTTP los colapsa a propósito en un mismo 404.
-      const cuenta = await accounts.open({
+      const account = await accounts.open({
         ownerId: await createOwner(prisma),
         name: "De otro",
       });
 
       await expect(
-        accounts.requireOwnedBy(cuenta.id, await createOwner(prisma)),
+        accounts.requireOwnedBy(account.id, await createOwner(prisma)),
       ).rejects.toThrow(NotYourAccountError);
     });
   });
 
   it("lista las cuentas de un dueño por orden de apertura", async () => {
-    const dueno = await createOwner(prisma);
-    await accounts.open({ ownerId: dueno, name: "Primera" });
-    await accounts.open({ ownerId: dueno, name: "Segunda" });
+    const owner = await createOwner(prisma);
+    await accounts.open({ ownerId: owner, name: "Primera" });
+    await accounts.open({ ownerId: owner, name: "Segunda" });
     await accounts.open({ ownerId: await createOwner(prisma), name: "De otro" });
 
-    const suyas = await accounts.byOwner(dueno);
+    const theirs = await accounts.byOwner(owner);
 
-    expect(suyas.map((cuenta) => cuenta.name)).toEqual(["Primera", "Segunda"]);
+    expect(theirs.map((account) => account.name)).toEqual(["Primera", "Segunda"]);
   });
 
   it("un dueño sin cuentas, o con un id mal formado, no tiene ninguna", async () => {

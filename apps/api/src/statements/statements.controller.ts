@@ -17,7 +17,7 @@ import { StatementsService } from "./statements.service";
  * también aquí sería tenerla en dos sitios que se pueden desincronizar. Un
  * `limit=abc` llega como `NaN` y el servicio lo rechaza con su propio error.
  */
-const consultaDelExtracto = z.object({
+const statementQuerySchema = z.object({
   cursor: z.string().optional(),
   limit: z.coerce.number().optional(),
 });
@@ -30,12 +30,12 @@ const consultaDelExtracto = z.object({
  * `@Query`. Su hermana de arriba, idéntica en forma, no lo dispara.
  */
 // eslint-disable-next-line no-useless-assignment
-const consultaDeSaldo = z.object({
+const balanceQuerySchema = z.object({
   at: z
     .string()
     .optional()
-    .transform((valor) => (valor === undefined ? new Date() : new Date(valor)))
-    .refine((fecha) => !Number.isNaN(fecha.getTime()), "no es una fecha válida"),
+    .transform((raw) => (raw === undefined ? new Date() : new Date(raw)))
+    .refine((date) => !Number.isNaN(date.getTime()), "no es una fecha válida"),
 });
 
 @Controller("accounts/:accountId")
@@ -49,7 +49,7 @@ export class StatementsController {
   async statement(
     @CurrentUser() user: AuthenticatedUser,
     @Param("accountId") accountId: string,
-    @Query(new ZodValidationPipe(consultaDelExtracto))
+    @Query(new ZodValidationPipe(statementQuerySchema))
     query: { cursor?: string; limit?: number },
   ): Promise<StatementPageView> {
     // Primero de quién es, después qué dice. Al revés se filtraría el extracto
@@ -63,7 +63,7 @@ export class StatementsController {
   async balance(
     @CurrentUser() user: AuthenticatedUser,
     @Param("accountId") accountId: string,
-    @Query(new ZodValidationPipe(consultaDeSaldo))
+    @Query(new ZodValidationPipe(balanceQuerySchema))
     query: { at: Date },
   ): Promise<{ balance: string; at: string }> {
     await this.accounts.requireOwnedBy(accountId, user.id);

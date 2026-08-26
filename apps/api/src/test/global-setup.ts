@@ -5,7 +5,7 @@ import { Client } from "pg";
 import { TEST_DATABASE_URL, testDatabaseName } from "./database-url";
 
 /** La base de desarrollo, que los tests no deben tocar jamás. */
-const BASE_DE_DESARROLLO = "arca";
+const DEVELOPMENT_DATABASE = "arca";
 
 /**
  * Prepara la base de pruebas antes de que corra ningún test.
@@ -15,18 +15,18 @@ const BASE_DE_DESARROLLO = "arca";
  * — los triggers de la migración — y un doble no tiene triggers.
  */
 export default async function setup(): Promise<void> {
-  const nombre = testDatabaseName();
+  const name = testDatabaseName();
 
   // Los tests hacen TRUNCATE. Si alguien apunta TEST_DATABASE_URL a la base de
   // desarrollo, se lleva sus datos por delante sin avisar.
-  if (nombre === BASE_DE_DESARROLLO) {
+  if (name === DEVELOPMENT_DATABASE) {
     throw new Error(
-      `La base de pruebas no puede ser «${BASE_DE_DESARROLLO}», que es la de desarrollo: ` +
+      `La base de pruebas no puede ser «${DEVELOPMENT_DATABASE}», que es la de desarrollo: ` +
         "los tests la vaciarían. Cambia TEST_DATABASE_URL.",
     );
   }
 
-  await crearSiFalta(nombre);
+  await createIfMissing(name);
 
   // `migrate deploy` y no `migrate dev`: aplica lo que hay y no inventa
   // migraciones nuevas si el esquema se movió.
@@ -44,7 +44,7 @@ export default async function setup(): Promise<void> {
  * `CREATE DATABASE` no se puede lanzar desde dentro de la base que se crea, así
  * que hay que conectarse a otra. `postgres` siempre existe.
  */
-async function crearSiFalta(nombre: string): Promise<void> {
+async function createIfMissing(name: string): Promise<void> {
   const admin = new URL(TEST_DATABASE_URL);
   admin.pathname = "/postgres";
   admin.search = "";
@@ -53,9 +53,9 @@ async function crearSiFalta(nombre: string): Promise<void> {
   await client.connect();
 
   try {
-    const existe = await client.query("SELECT 1 FROM pg_database WHERE datname = $1", [nombre]);
-    if (existe.rowCount === 0) {
-      await client.query(`CREATE DATABASE "${nombre}"`);
+    const exists = await client.query("SELECT 1 FROM pg_database WHERE datname = $1", [name]);
+    if (exists.rowCount === 0) {
+      await client.query(`CREATE DATABASE "${name}"`);
     }
   } finally {
     await client.end();

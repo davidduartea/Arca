@@ -5,16 +5,16 @@
  * `0.1 + 0.2` deja de ser `0.3` y la diferencia se acumula hasta que los libros
  * dejan de cuadrar.
  */
-const CENTAVOS_POR_DOLAR = 100n;
+const CENTS_PER_DOLLAR = 100n;
 
-export function formatUsd(centavos: bigint): string {
-  const negativo = centavos < 0n;
-  const absoluto = negativo ? -centavos : centavos;
+export function formatUsd(cents: bigint): string {
+  const isNegative = cents < 0n;
+  const absolute = isNegative ? -cents : cents;
 
-  const dolares = absoluto / CENTAVOS_POR_DOLAR;
-  const resto = absoluto % CENTAVOS_POR_DOLAR;
+  const dollars = absolute / CENTS_PER_DOLLAR;
+  const remainder = absolute % CENTS_PER_DOLLAR;
 
-  return `${negativo ? "-" : ""}$${dolares}.${resto.toString().padStart(2, "0")}`;
+  return `${isNegative ? "-" : ""}$${dollars}.${remainder.toString().padStart(2, "0")}`;
 }
 
 /**
@@ -28,6 +28,6 @@ export function formatUsd(centavos: bigint): string {
  * Con texto, quien recibe decide: `BigInt(valor)` si va a operar, o mostrarlo
  * tal cual. Lo que no puede es perderlo por el camino.
  */
-export function toWire(centavos: bigint): string {
-  return centavos.toString();
+export function toWire(cents: bigint): string {
+  return cents.toString();
 }

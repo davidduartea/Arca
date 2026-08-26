@@ -62,10 +62,10 @@ export function transactionView(transaction: PostedTransaction): TransactionView
     description: transaction.description,
     reversesId: transaction.reversesId,
     createdAt: transaction.createdAt.toISOString(),
-    entries: transaction.entries.map((asiento) => ({
-      id: asiento.id,
-      accountId: asiento.accountId,
-      amount: toWire(asiento.amount),
+    entries: transaction.entries.map((entry) => ({
+      id: entry.id,
+      accountId: entry.accountId,
+      amount: toWire(entry.amount),
     })),
   };
 }
