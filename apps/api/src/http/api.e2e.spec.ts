@@ -60,6 +60,23 @@ describe("API HTTP", () => {
     return response.body.id as string;
   };
 
+  /**
+   * Como `openAccount`, pero devuelve también el número de arca.
+   *
+   * Lo necesitan las transferencias: el destino se teclea, así que viaja como
+   * número y no como uuid. El ingreso sigue con el uuid porque ahí se elige de
+   * una lista de cuentas propias.
+   */
+  const openAccountNumber = async (token: string, name = "Cuenta corriente") => {
+    const response = await request(server)
+      .post("/accounts")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ name })
+      .expect(201);
+
+    return { id: response.body.id as string, number: response.body.number as string };
+  };
+
   const deposit = (token: string, accountId: string, centavos: string) =>
     request(server)
       .post("/deposits")
@@ -300,14 +317,18 @@ describe("API HTTP", () => {
     it("mueve dinero entre cuentas", async () => {
       const ana = await register();
       const luis = await register();
-      const anaAccount = await openAccount(ana.token);
-      const luisAccount = await openAccount(luis.token);
-      await deposit(ana.token, anaAccount, "10000").expect(201);
+      const anaAccount = await openAccountNumber(ana.token);
+      const luisAccount = await openAccountNumber(luis.token);
+      await deposit(ana.token, anaAccount.id, "10000").expect(201);
 
       const response = await request(server)
         .post("/transfers")
         .set("Authorization", `Bearer ${ana.token}`)
-        .send({ fromAccountId: anaAccount, toAccountId: luisAccount, amount: "2500" })
+        .send({
+          fromAccountId: anaAccount.id,
+          toAccountNumber: luisAccount.number,
+          amount: "2500",
+        })
         .expect(201);
 
       const entries = response.body.entries as { amount: string }[];
@@ -319,16 +340,20 @@ describe("API HTTP", () => {
     it("no se puede sacar dinero de la cuenta de otro", async () => {
       const ana = await register();
       const luis = await register();
-      const anaAccount = await openAccount(ana.token);
-      const luisAccount = await openAccount(luis.token);
-      await deposit(luis.token, luisAccount, "10000").expect(201);
+      const anaAccount = await openAccountNumber(ana.token);
+      const luisAccount = await openAccountNumber(luis.token);
+      await deposit(luis.token, luisAccount.id, "10000").expect(201);
 
       // El control de seguridad del módulo: se puede ingresar a cualquiera,
       // pero sólo sacar de lo propio.
       await request(server)
         .post("/transfers")
         .set("Authorization", `Bearer ${ana.token}`)
-        .send({ fromAccountId: luisAccount, toAccountId: anaAccount, amount: "2500" })
+        .send({
+          fromAccountId: luisAccount.id,
+          toAccountNumber: anaAccount.number,
+          amount: "2500",
+        })
         .expect(404);
     });
 
@@ -342,26 +367,34 @@ describe("API HTTP", () => {
 
     it("nadie puede usar la cuenta del mundo exterior como origen", async () => {
       const ana = await register();
-      const theirs = await openAccount(ana.token);
+      const theirs = await openAccountNumber(ana.token);
 
       await request(server)
         .post("/transfers")
         .set("Authorization", `Bearer ${ana.token}`)
-        .send({ fromAccountId: WORLD_ACCOUNT_ID, toAccountId: theirs, amount: "100000" })
+        .send({
+          fromAccountId: WORLD_ACCOUNT_ID,
+          toAccountNumber: theirs.number,
+          amount: "100000",
+        })
         .expect(404);
     });
 
     it("sin fondos responde 409", async () => {
       const ana = await register();
       const luis = await register();
-      const anaAccount = await openAccount(ana.token);
-      const luisAccount = await openAccount(luis.token);
-      await deposit(ana.token, anaAccount, "1000").expect(201);
+      const anaAccount = await openAccountNumber(ana.token);
+      const luisAccount = await openAccountNumber(luis.token);
+      await deposit(ana.token, anaAccount.id, "1000").expect(201);
 
       const response = await request(server)
         .post("/transfers")
         .set("Authorization", `Bearer ${ana.token}`)
-        .send({ fromAccountId: anaAccount, toAccountId: luisAccount, amount: "5000" })
+        .send({
+          fromAccountId: anaAccount.id,
+          toAccountNumber: luisAccount.number,
+          amount: "5000",
+        })
         .expect(409);
 
       expect(response.body.error).toBe("InsufficientFundsError");
@@ -370,13 +403,13 @@ describe("API HTTP", () => {
     it("reintentar con la misma clave no cobra dos veces", async () => {
       const ana = await register();
       const luis = await register();
-      const anaAccount = await openAccount(ana.token);
-      const luisAccount = await openAccount(luis.token);
-      await deposit(ana.token, anaAccount, "10000").expect(201);
+      const anaAccount = await openAccountNumber(ana.token);
+      const luisAccount = await openAccountNumber(luis.token);
+      await deposit(ana.token, anaAccount.id, "10000").expect(201);
 
       const order = {
-        fromAccountId: anaAccount,
-        toAccountId: luisAccount,
+        fromAccountId: anaAccount.id,
+        toAccountNumber: luisAccount.number,
         amount: "2500",
         idempotencyKey: randomUUID(),
       };
@@ -396,11 +429,128 @@ describe("API HTTP", () => {
       expect(retry.body.id).toBe(first.body.id);
 
       const balance = await request(server)
-        .get(`/accounts/${anaAccount}`)
+        .get(`/accounts/${anaAccount.id}`)
         .set("Authorization", `Bearer ${ana.token}`)
         .expect(200);
 
       expect(balance.body.balance).toBe("7500");
+    });
+  });
+
+  /**
+   * El número de arca.
+   *
+   * Es lo único de una cuenta que una persona ve, dicta o teclea. El uuid sigue
+   * existiendo como clave interna, pero nadie lo copia: no se puede dictar por
+   * teléfono y se equivoca uno de cada tres veces.
+   */
+  describe("número de arca", () => {
+    it("una cuenta nueva viene con el suyo", async () => {
+      const { token } = await register();
+
+      const response = await request(server)
+        .post("/accounts")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ name: "Ahorro" })
+        .expect(201);
+
+      expect(response.body.number).toMatch(/^\d{12}$/);
+    });
+
+    it("cada cuenta tiene el suyo", async () => {
+      const { token } = await register();
+      const first = await openAccountNumber(token, "Corriente");
+      const second = await openAccountNumber(token, "Ahorro");
+
+      expect(first.number).not.toBe(second.number);
+    });
+
+    it("se puede consultar a quién pertenece, para confirmar antes de mandar", async () => {
+      const luis = await register();
+      const account = await openAccountNumber(luis.token, "Cuenta de Luis");
+      const ana = await register();
+
+      // Lo consulta Ana, que no es la dueña: para eso está un número de arca.
+      const response = await request(server)
+        .get(`/accounts/lookup?number=${account.number}`)
+        .set("Authorization", `Bearer ${ana.token}`)
+        .expect(200);
+
+      expect(response.body.name).toBe("Cuenta de Luis");
+    });
+
+    it("la consulta no filtra nada más que el nombre", async () => {
+      const luis = await register();
+      const account = await openAccountNumber(luis.token);
+      const ana = await register();
+
+      const response = await request(server)
+        .get(`/accounts/lookup?number=${account.number}`)
+        .set("Authorization", `Bearer ${ana.token}`)
+        .expect(200);
+
+      // Ni el saldo, ni el correo del dueño, ni el identificador interno.
+      expect(Object.keys(response.body)).toEqual(["name"]);
+    });
+
+    it("acepta el número escrito de cualquier forma", async () => {
+      const { token } = await register();
+      const account = await openAccountNumber(token);
+      const grouped = `${account.number.slice(0, 4)} ${account.number.slice(4, 8)} ${account.number.slice(8)}`;
+
+      for (const typed of [grouped, grouped.replaceAll(" ", "-"), `ARCA ${grouped}`]) {
+        await request(server)
+          .get(`/accounts/lookup?number=${encodeURIComponent(typed)}`)
+          .set("Authorization", `Bearer ${token}`)
+          .expect(200);
+      }
+    });
+
+    it("un número mal copiado no llega a ser una consulta", async () => {
+      const { token } = await register();
+      const account = await openAccountNumber(token);
+
+      // Cambiada la última cifra: el dígito de control ya no cuadra.
+      const broken = account.number.slice(0, 11) + ((Number(account.number[11]) + 1) % 10);
+
+      await request(server)
+        .get(`/accounts/lookup?number=${broken}`)
+        .set("Authorization", `Bearer ${token}`)
+        .expect(404);
+    });
+
+    it("el mundo exterior no se resuelve", async () => {
+      const { token } = await register();
+
+      // Su número existe, pero es una cuenta de sistema: nadie le transfiere.
+      const world = await prisma.account.findUnique({
+        where: { id: WORLD_ACCOUNT_ID },
+        select: { number: true },
+      });
+
+      await request(server)
+        .get(`/accounts/lookup?number=${world?.number ?? ""}`)
+        .set("Authorization", `Bearer ${token}`)
+        .expect(404);
+    });
+
+    it("transferir a un número mal copiado no mueve nada", async () => {
+      const ana = await register();
+      const anaAccount = await openAccountNumber(ana.token);
+      await deposit(ana.token, anaAccount.id, "10000").expect(201);
+
+      await request(server)
+        .post("/transfers")
+        .set("Authorization", `Bearer ${ana.token}`)
+        .send({ fromAccountId: anaAccount.id, toAccountNumber: "471800000000", amount: "2500" })
+        .expect(404);
+
+      const after = await request(server)
+        .get(`/accounts/${anaAccount.id}`)
+        .set("Authorization", `Bearer ${ana.token}`)
+        .expect(200);
+
+      expect(after.body.balance).toBe("10000");
     });
   });
 

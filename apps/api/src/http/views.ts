@@ -25,6 +25,10 @@ import { toWire } from "../shared/money";
 export interface AccountView {
   id: string;
   name: string;
+
+  /** Doce cifras a secas: quien las pinta decide cómo agruparlas. */
+  number: string;
+
   kind: "USER" | "SYSTEM";
   /** Centavos, como texto. */
   balance: string;
@@ -35,6 +39,7 @@ export function accountView(account: Account, balance: bigint): AccountView {
   return {
     id: account.id,
     name: account.name,
+    number: account.number,
     kind: account.kind,
     balance: toWire(balance),
     createdAt: account.createdAt.toISOString(),

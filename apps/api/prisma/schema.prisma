@@ -50,6 +50,19 @@ model Account {
   /// Lo que ve quien la usa: «Cuenta corriente», «Ahorro».
   name String
 
+  /// El número que se le da a otra persona para poder recibir dinero.
+  ///
+  /// Doce cifras: cuatro de emisión, siete de cuenta y una de control. El uuid
+  /// sigue siendo la clave interna; esto es lo único que una persona ve, dicta
+  /// o teclea, porque un uuid no se puede dictar por teléfono.
+  ///
+  /// La base comprueba el dígito de control con un `CHECK`, igual que comprueba
+  /// que los asientos sumen cero: si la regla vive sólo en el código, un
+  /// `INSERT` desde otro sitio mete un número que nadie podrá teclear.
+  /// El valor por defecto lo pone la base para que un INSERT que no mencione
+  /// la columna —una version vieja del codigo, un script— siga funcionando.
+  number String @unique @default(dbgenerated("arca_new_number()")) @db.Char(12)
+
   /// Distingue las cuentas de personas de las del propio sistema.
   ///
   /// Un ingreso desde fuera tiene que salir de algún sitio, o la transacción
