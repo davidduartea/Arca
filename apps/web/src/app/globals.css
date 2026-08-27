@@ -1,0 +1,158 @@
+/*
+ * El sistema de Arca: grabado a una tinta.
+ *
+ * Un solo tema, claro y cálido, con el verde profundo de ancla. Es una decisión
+ * y no un olvido: la paleta viene del papel moneda, donde el verde existe sobre
+ * crema y no sobre negro. Por eso no hay bloque de tema oscuro y el fondo del
+ * body se pinta siempre — sin él, la página tomaría prestado el fondo del que
+ * la aloje.
+ *
+ * Desde que el estilo es Tailwind, este archivo ya no describe componentes.
+ * Hace dos cosas y ninguna más: declarar los tokens del sistema, que Tailwind
+ * convierte en utilidades, y decir cómo se ve un elemento desnudo. Lo que antes
+ * era una clase con nombre —`.btn`, `.field`, `.notice`— vive ahora en `src/ui`,
+ * escrito en TypeScript, porque la repetición de un componente se resuelve con
+ * un componente y no con otra hoja de estilos.
+ */
+
+@import "tailwindcss";
+
+/*
+ * Dónde buscar las clases escritas.
+ *
+ * Tailwind sólo genera el CSS de lo que encuentra usado. Se lo decimos a mano
+ * porque en un monorepo la detección automática sube hasta la raíz y acaba
+ * leyendo la API, que no tiene una sola clase.
+ */
+@source "../";
+
+@theme {
+  /*
+   * La paleta de fábrica se borra entera antes de declarar la nuestra.
+   *
+   * No es purismo. Con las 22 escalas de Tailwind dentro, `bg-blue-500` compila
+   * sin protestar y nadie se entera hasta verlo en pantalla; una tinta sólo es
+   * una tinta si no hay diecisiete más al alcance de la mano.
+   */
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+  --color-inherit: inherit;
+
+  /* Tinta */
+  --color-green: #1f4634;
+  --color-green-light: #2f6b4d;
+  --color-ground: #f0eee9;
+  --color-paper: #fdfbf7;
+  --color-ink: #1a1a1a;
+  --color-ink-2: #4a4a45;
+  --color-ink-3: #6b6b63;
+  --color-ink-4: #8a8a80;
+
+  /* Filetes: gruesa entre secciones, fina entre filas. Nunca una sombra. */
+  --color-rule: rgba(31, 70, 52, 0.85);
+  --color-hair: rgba(31, 70, 52, 0.16);
+  --color-hair-strong: rgba(31, 70, 52, 0.35);
+
+  /*
+   * Letra.
+   *
+   * `next/font` publica las suyas como `--face-*` y no como `--font-*`: los
+   * segundos son el espacio de nombres de Tailwind, y si los dos escribieran
+   * ahí ganaría el último en llegar. Separarlos deja la cadena clara — la cara
+   * la sirve Next, la pila de reserva la pone el sistema.
+   */
+  --font-serif: var(--face-serif), "Times New Roman", Georgia, serif;
+  --font-sans: var(--face-sans), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--face-mono), ui-monospace, "SF Mono", Menlo, monospace;
+
+  /*
+   * Espaciado: 4 · 8 · 12 · 18 · 26 · 40.
+   *
+   * Van con nombre propio (`p-s4`, `gap-s2`) y no encima de la escala numérica
+   * de Tailwind, que avanza de cuatro en cuatro. Dos de estos pasos —18 y 26—
+   * no son múltiplos de cuatro, así que llamarlos `p-4` o `p-6` haría que el
+   * mismo número significase dos cosas distintas según quién lo leyera.
+   */
+  --spacing-s1: 4px;
+  --spacing-s2: 8px;
+  --spacing-s3: 12px;
+  --spacing-s4: 18px;
+  --spacing-s5: 26px;
+  --spacing-s6: 40px;
+
+  /*
+   * El esqueleto no aparece antes de 300 ms.
+   *
+   * Si la respuesta llega en ochenta, el parpadeo se nota más que la espera. El
+   * retardo va en la animación y no en JavaScript: así no hay nada que montar ni
+   * temporizador que limpiar. Y no late — esto es papel, no una pantalla de
+   * televisión.
+   */
+  --animate-reveal: reveal 1ms linear 300ms forwards;
+
+  @keyframes reveal {
+    to {
+      opacity: 1;
+    }
+  }
+}
+
+/*
+ * Los elementos desnudos.
+ *
+ * Va en `base` para que cualquier utilidad escrita en el marcado le gane sin
+ * pelear por especificidad: las capas de Tailwind están ordenadas, y `base`
+ * pierde siempre contra `utilities`.
+ *
+ * Es corto porque el preflight de Tailwind ya quita los márgenes, iguala el
+ * `box-sizing`, hace bloque a las imágenes y hereda la letra en los campos.
+ * Aquí sólo queda lo que es de Arca y no de cualquier sitio.
+ */
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background: var(--color-ground);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-serif);
+    font-weight: 400;
+    line-height: 1.12;
+    text-wrap: balance;
+  }
+
+  a {
+    color: var(--color-green);
+    text-underline-offset: 3px;
+  }
+
+  a:hover {
+    color: var(--color-green-light);
+  }
+
+  /* El foco se ve siempre. Un contorno de la propia tinta, no el azul del sistema. */
+  :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid var(--color-green);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
