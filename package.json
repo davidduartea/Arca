@@ -19,13 +19,16 @@
     "db:migrate": "pnpm --filter @arca/api db:migrate",
     "db:generate": "pnpm --filter @arca/api db:generate",
     "db:studio": "pnpm --filter @arca/api db:studio",
-    "ledger:audit": "pnpm --filter @arca/api ledger:audit"
+    "ledger:audit": "pnpm --filter @arca/api ledger:audit",
+    "dev:web": "pnpm --filter @arca/web dev",
+    "art": "pnpm --filter @arca/web art"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.9.0",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.9.6",
+    "prettier-plugin-tailwindcss": "^0.8.1",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.67.0"
   }

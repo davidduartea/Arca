@@ -72,10 +72,12 @@ porque se le cayó la red, no se cobra dos veces.
 **Fase 3 · extracto y saldo a fecha** — hecho
 **Fase 4 · API HTTP** — hecho
 **Fase 5 · auditoría del libro** — hecho
+**Fase 6 · la cara** — hecho
 
-160 tests contra Postgres de verdad, no contra dobles. No es purismo: buena
-parte de lo que hay que probar **es** la base, y un doble no tiene triggers. Un
-test que pasara con un doble no diría nada sobre si el libro cuadra.
+239 tests: 180 de la API y 59 del frontal. Los de integración van contra
+Postgres de verdad y no contra dobles. No es purismo: buena parte de lo que hay
+que probar **es** la base, y un doble no tiene triggers. Un test que pasara con
+un doble no diría nada sobre si el libro cuadra.
 
 El motor registra movimientos, deriva saldos e invierte transacciones para
 corregir errores. No guarda saldos y no decide si un movimiento está permitido:
@@ -91,12 +93,16 @@ un comando que audita el libro entero y no se fía de nada de lo anterior.
 | GET    | `/accounts`                 | mis cuentas con saldo      |
 | POST   | `/accounts`                 | abrir una                  |
 | GET    | `/accounts/:id`             | una, con saldo             |
+| GET    | `/accounts/lookup?number=`  | de quién es un número      |
 | GET    | `/accounts/:id/statement`   | extracto paginado          |
 | GET    | `/accounts/:id/balance?at=` | saldo a una fecha          |
 | POST   | `/transfers`                | mover dinero               |
 | POST   | `/deposits`                 | simular un ingreso externo |
 
-Lo que viene: **una cara**. El backend está entero.
+El frontal es Next.js y **ni una petición sale del navegador hacia la API**:
+todo pasa por acciones de servidor. El token vive en una cookie que el
+JavaScript no puede leer, y el origen del backend no aparece en el paquete que
+se descarga nadie. Lo único que ve el cliente son rutas de su propio dominio.
 
 ### Lo que costó averiguar
 
@@ -260,6 +266,8 @@ pnpm db:up          # Postgres en el 5433
 pnpm db:migrate
 pnpm test           # crea la base de pruebas y la migra por su cuenta
 pnpm ledger:audit   # ¿cuadra el libro entero?
+pnpm dev            # la API en el 3000
+pnpm dev:web        # la web en el 3001
 ```
 
 El puerto es el 5433 y no el 5432 para no chocar con otras bases en la misma

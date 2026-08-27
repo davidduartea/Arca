@@ -4,7 +4,13 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["**/dist/**", "**/node_modules/**", "**/coverage/**", "**/*.generated.*"],
+    ignores: [
+      "**/dist/**",
+      "**/.next/**",
+      "**/node_modules/**",
+      "**/coverage/**",
+      "**/*.generated.*",
+    ],
   },
 
   js.configs.recommended,
@@ -50,8 +56,26 @@ export default tseslint.config(
     // Los archivos de configuración quedan fuera del tsconfig de cada paquete
     // — ese sólo incluye `src/` — así que el servicio de proyecto no los ve y
     // las reglas con tipos no pueden analizarlos. Se comprueban sin tipos.
-    files: ["**/*.config.ts", "**/*.config.mts", "**/*.config.mjs"],
+    files: ["**/*.config.ts", "**/*.config.mts", "**/*.config.mjs", "**/scripts/*.mjs"],
     ...tseslint.configs.disableTypeChecked,
+
+    // Sin tipos, ESLint tampoco sabe que esto corre en Node. Se declaran las
+    // globales que usan los scripts en lugar de añadir un paquete entero de
+    // definiciones para cinco nombres.
+    //
+    // Se conserva lo que trae `disableTypeChecked`: ahí va el `projectService:
+    // false` que permite analizar archivos que ningún tsconfig incluye. Sin
+    // esparcirlo, este bloque lo reemplazaría y volverían los errores de
+    // parseo.
+    languageOptions: {
+      ...tseslint.configs.disableTypeChecked.languageOptions,
+      globals: {
+        Buffer: "readonly",
+        URL: "readonly",
+        console: "readonly",
+        process: "readonly",
+      },
+    },
   },
 
   // Va el último: apaga las reglas de estilo que pisarían a Prettier.

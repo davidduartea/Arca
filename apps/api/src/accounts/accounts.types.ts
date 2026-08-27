@@ -17,6 +17,10 @@ export interface Account {
   id: string;
   ownerId: string;
   name: string;
+
+  /** Doce cifras. Lo unico que una persona ve, dicta o teclea de una cuenta. */
+  number: string;
+
   kind: AccountKind;
   createdAt: Date;
 }

@@ -1,4 +1,11 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  HttpCode,
+  HttpStatus,
+  NotFoundException,
+  Post,
+} from "@nestjs/common";
 import { z } from "zod";
 
 import { AccountsService } from "../accounts/accounts.service";
@@ -29,9 +36,18 @@ const amountInCents = z
 
 const accountIdSchema = z.string().uuid("no es un identificador de cuenta");
 
+/**
+ * El destino se teclea, asi que llega como numero de arca y no como uuid.
+ *
+ * Se acepta escrito de cualquier forma. Quien lo comprueba de verdad es
+ * `AccountsService.byNumber`, que valida el digito de control antes de
+ * preguntarle nada a la base.
+ */
+const arcaNumberSchema = z.string().trim().min(12, "un numero de arca son doce cifras").max(32);
+
 const transferOrderSchema = z.object({
   fromAccountId: accountIdSchema,
-  toAccountId: accountIdSchema,
+  toAccountNumber: arcaNumberSchema,
   amount: amountInCents,
   description: z.string().trim().min(1).max(140).optional(),
   idempotencyKey: z.string().trim().min(8).max(128).optional(),
@@ -67,7 +83,23 @@ export class TransfersController {
   ): Promise<TransactionView> {
     await this.accounts.requireOwnedBy(body.fromAccountId, user.id);
 
-    return transactionView(await this.transfers.transfer(body));
+    const { toAccountNumber, ...order } = body;
+    const destination = await this.accounts.byNumber(toAccountNumber);
+
+    // Mismo rechazo si el dígito de control no cuadra, si el número no está
+    // emitido o si apunta a una cuenta de sistema: quien transfiere no tiene
+    // por qué distinguirlos, y distinguirlos serviría para ir mapeando qué
+    // números existen.
+    if (!destination || destination.kind === "SYSTEM") {
+      throw new NotFoundException({
+        error: "UnknownAccountError",
+        message: "No encontramos ninguna arca con ese número",
+      });
+    }
+
+    return transactionView(
+      await this.transfers.transfer({ ...order, toAccountId: destination.id }),
+    );
   }
 
   /**
