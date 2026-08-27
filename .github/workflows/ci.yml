@@ -1,0 +1,123 @@
+###############################################################################
+# La verificacion que corre sola.
+#
+# Existe por una razon concreta: `pnpm test:coverage` llevaba roto meses y nadie
+# se entero, porque nada lo ejecutaba. Un script que no corre en ningun sitio se
+# pudre, y con el se pudre la garantia que decia dar.
+###############################################################################
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Un push nuevo sobre la misma rama cancela la corrida anterior: lo que importa
+# es si el ultimo commit esta sano, no los intermedios.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Solo lectura. Este trabajo no publica nada ni escribe en el repositorio, y un
+# token con mas permisos de los que necesita es superficie regalada.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Formato · Lint · Tipos · Tests · Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # Postgres de verdad, no un doble.
+    #
+    # Buena parte de lo que hay que probar **es** la base: la suma a cero la
+    # garantiza un trigger diferido, la inmutabilidad de los asientos otro, y el
+    # digito de control un CHECK. Un doble no tiene nada de eso, asi que un test
+    # que pasara contra el no diria nada sobre si el libro cuadra.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: arca
+          POSTGRES_PASSWORD: arca
+          POSTGRES_DB: arca
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U arca -d arca"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # El puerto es el 5432 y no el 5433 de `docker-compose.yml`: alli se
+      # desplaza para no chocar con otras bases en la misma maquina, y aqui el
+      # contenedor tiene la suya para el solo.
+      DATABASE_URL: postgresql://arca:arca@localhost:5432/arca?schema=public
+      DIRECT_URL: postgresql://arca:arca@localhost:5432/arca?schema=public
+
+      # Base aparte, que los tests vacian entre casos. El arranque de Vitest la
+      # crea y le aplica las migraciones. Nunca puede ser `arca`: hay una
+      # comprobacion que lo impide, porque un TRUNCATE contra la de desarrollo
+      # se lleva los datos por delante sin avisar.
+      TEST_DATABASE_URL: postgresql://arca:arca@localhost:5432/arca_test?schema=public
+
+      # De relleno y a la vista a proposito: aqui no se firma nada que vaya a
+      # existir despues de este trabajo. La validacion exige 32 caracteres, asi
+      # que tampoco puede ser mas corto.
+      JWT_SECRET: solo-para-el-ci-y-por-eso-esta-a-la-vista-de-todos
+
+      # `next build` compila en modo produccion, y ahi API_URL es obligatoria a
+      # proposito: sin ella la aplicacion apuntaria a localhost sin avisar.
+      #
+      # El valor es un marcador, no un destino. `.invalid` es un dominio de
+      # primer nivel reservado (RFC 2606) que no resuelve en ninguna parte: si
+      # algun dia el build empezara a llamar de verdad a la API, fallaria aqui
+      # en vez de hablar con algo real por accidente.
+      API_URL: https://api.arca.invalid
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # Sin version: la lee de `packageManager` en package.json, que es la unica
+      # fuente de verdad de con que pnpm se instala esto.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # `--frozen-lockfile` hace que falle si el lockfile no corresponde al
+      # package.json, en vez de resolver versiones nuevas en silencio. Es la
+      # mitad de la politica de suministro; la otra mitad vive en
+      # `pnpm-workspace.yaml`: scripts de instalacion denegados por defecto y
+      # una ventana de 24 h antes de aceptar una version recien publicada.
+      - name: Instalar
+        run: pnpm install --frozen-lockfile
+
+      # El postinstall de @prisma/client esta bloqueado por esa misma politica,
+      # asi que generar el cliente es un paso explicito. Va antes que lint y
+      # typecheck porque los tipos de las tablas salen de aqui, y sin ellos las
+      # reglas de ESLint que necesitan tipos no pueden analizar nada.
+      - name: Generar el cliente de Prisma
+        run: pnpm db:generate
+
+      - name: Formato
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Tipos
+        run: pnpm typecheck
+
+      # Con cobertura y no a secas: los umbrales rompen el trabajo, que es lo
+      # unico que impide que la suite crezca sin cubrir lo que importa.
+      - name: Tests con cobertura
+        run: pnpm test:coverage
+
+      - name: Build
+        run: pnpm build
