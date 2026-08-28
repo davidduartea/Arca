@@ -31,6 +31,13 @@ model User {
   /// contraseña, ni algo de lo que se pueda sacar.
   passwordHash String @map("password_hash")
 
+  /// Sube cada vez que hay que invalidar todo lo firmado hasta ahora.
+  ///
+  /// El token lleva dentro el valor que tenía al emitirse, y el guardia compara
+  /// los dos en cada petición. Subirlo una vez deja fuera a cualquier token
+  /// anterior, esté donde esté y le quede lo que le quede de vida.
+  tokenVersion Int @default(0) @map("token_version")
+
   createdAt DateTime @default(now()) @map("created_at")
 
   accounts Account[]

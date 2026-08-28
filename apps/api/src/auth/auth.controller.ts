@@ -1,11 +1,11 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, HttpStatus, Patch, Post } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
 import { z } from "zod";
 
 import { ZodValidationPipe } from "../http/zod-validation.pipe";
 import { CurrentUser } from "./current-user.decorator";
 import { AuthService } from "./auth.service";
-import type { AuthenticatedUser, Credentials, Session } from "./auth.types";
+import type { AuthenticatedUser, Credentials, PasswordChange, Session } from "./auth.types";
 import { Public } from "./public.decorator";
 
 /**
@@ -16,13 +16,26 @@ import { Public } from "./public.decorator";
  */
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/**
+ * Doce caracteres y ninguna regla de composición.
+ *
+ * Obligar a mayúsculas y símbolos produce «Password1!» una y otra vez; la
+ * longitud es lo que manda, y es lo que recomienda el NIST desde hace años. El
+ * tope existe para que nadie mande un campo de diez megas y lo hasheemos.
+ */
+const PASSWORD = z.string().min(12, "hacen falta al menos 12 caracteres").max(200);
+
 const credentialsSchema = z.object({
   email: z.string().trim().max(254).regex(EMAIL_SHAPE, "no parece un correo"),
+  password: PASSWORD,
+});
 
-  // Doce caracteres y ninguna regla de composición. Obligar a mayúsculas y
-  // símbolos produce «Password1!» una y otra vez; la longitud es lo que manda,
-  // y es lo que recomienda el NIST desde hace años.
-  password: z.string().min(12, "hacen falta al menos 12 caracteres").max(200),
+const passwordChangeSchema = z.object({
+  // La actual sólo tiene que estar. Medirla con la regla de arriba rechazaría
+  // por corta una contraseña que de verdad es la suya, y el mensaje hablaría de
+  // la longitud cuando el problema es otro.
+  currentPassword: z.string().min(1, "hace falta tu contraseña actual").max(200),
+  newPassword: PASSWORD,
 });
 
 /** Cinco intentos por minuto: suficiente para quien se equivoca, inútil para probar a ciegas. */
@@ -54,5 +67,34 @@ export class AuthController {
   @Get("me")
   me(@CurrentUser() user: AuthenticatedUser): { user: AuthenticatedUser } {
     return { user };
+  }
+
+  /**
+   * Cambia la contraseña y devuelve una sesión nueva.
+   *
+   * Con el mismo tope de intentos que el inicio de sesión: aquí también se
+   * adivina una contraseña, con la diferencia de que quien lo intenta ya está
+   * dentro — que es justo el caso de un token robado buscando quedarse.
+   */
+  @Throttle(ATTEMPT_LIMIT)
+  @Patch("password")
+  @HttpCode(HttpStatus.OK)
+  changePassword(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body(new ZodValidationPipe(passwordChangeSchema)) body: PasswordChange,
+  ): Promise<Session> {
+    return this.auth.changePassword(user.id, body);
+  }
+
+  /**
+   * Cierra todas las sesiones, incluida la de quien lo pide.
+   *
+   * Sin cuerpo en la respuesta porque no hay nada que devolver: el token con el
+   * que se ha hecho esta llamada ya no vale para la siguiente.
+   */
+  @Post("logout-all")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async closeAllSessions(@CurrentUser() user: AuthenticatedUser): Promise<void> {
+    await this.auth.closeAllSessions(user.id);
   }
 }

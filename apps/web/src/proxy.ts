@@ -65,5 +65,8 @@ function hasExpired(token: string): boolean {
 }
 
 export const config = {
-  matcher: ["/accounts/:path*", "/transfers/:path*", "/deposits/:path*"],
+  // `/account` va suelto y sin `:path*`: es una sola pantalla y no cuelga nada
+  // de ella. Escribirlo como prefijo haría que tapara también a `/accounts`, que
+  // es otra cosa y ya tiene su entrada.
+  matcher: ["/account", "/accounts/:path*", "/transfers/:path*", "/deposits/:path*"],
 };

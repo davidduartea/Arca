@@ -190,6 +190,139 @@ describe("API HTTP", () => {
     });
   });
 
+  describe("cerrar sesiones", () => {
+    const NEW_PASSWORD = "otra-contraseña-igual-de-larga";
+
+    const changePassword = (token: string, currentPassword: string, newPassword: string) =>
+      request(server)
+        .patch("/auth/password")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ currentPassword, newPassword });
+
+    const stillWorks = (token: string) =>
+      request(server).get("/auth/me").set("Authorization", `Bearer ${token}`);
+
+    it("cambiar la contraseña devuelve una sesión que funciona", async () => {
+      const { token, userId } = await register();
+
+      const response = await changePassword(token, PASSWORD, NEW_PASSWORD).expect(200);
+
+      expect(response.body.user.id).toBe(userId);
+      await stillWorks(response.body.token).expect(200);
+    });
+
+    /** El motivo de existir de todo esto. */
+    it("y deja fuera al token con el que se pidió el cambio", async () => {
+      const { token } = await register();
+
+      await changePassword(token, PASSWORD, NEW_PASSWORD).expect(200);
+
+      await stillWorks(token).expect(401);
+    });
+
+    it("echa a las demás sesiones de la misma persona", async () => {
+      const { email, token } = await register();
+
+      // Otra sesión abierta: el mismo usuario entrando desde otro sitio.
+      const other = await request(server)
+        .post("/auth/login")
+        .send({ email, password: PASSWORD })
+        .expect(200);
+
+      await stillWorks(other.body.token).expect(200);
+      await changePassword(token, PASSWORD, NEW_PASSWORD).expect(200);
+      await stillWorks(other.body.token).expect(401);
+    });
+
+    it("a partir de ahí se entra con la nueva y no con la vieja", async () => {
+      const { email, token } = await register();
+      await changePassword(token, PASSWORD, NEW_PASSWORD).expect(200);
+
+      await request(server).post("/auth/login").send({ email, password: PASSWORD }).expect(401);
+
+      await request(server)
+        .post("/auth/login")
+        .send({ email, password: NEW_PASSWORD })
+        .expect(200);
+    });
+
+    /**
+     * 403 y no 401, a propósito.
+     *
+     * Un 401 le diría al cliente que la sesión ya no vale, y cerraría la de
+     * alguien que sólo se ha equivocado tecleando. Por eso se comprueba también
+     * que el token siga sirviendo después del fallo.
+     */
+    it("la contraseña actual equivocada es un 403 y no cierra nada", async () => {
+      const { token } = await register();
+
+      await changePassword(token, "no-es-esta-para-nada", NEW_PASSWORD).expect(403);
+
+      await stillWorks(token).expect(200);
+    });
+
+    it("no deja poner la misma que ya tenía", async () => {
+      const { token } = await register();
+
+      await changePassword(token, PASSWORD, PASSWORD).expect(400);
+
+      await stillWorks(token).expect(200);
+    });
+
+    it("la nueva tiene que ser larga, y lo dice por su campo", async () => {
+      const { token } = await register();
+
+      const response = await changePassword(token, PASSWORD, "corta").expect(400);
+
+      expect(response.body.issues).toContainEqual(
+        expect.objectContaining({ field: "newPassword" }),
+      );
+    });
+
+    it("salir de todos los sitios echa también a quien lo pide", async () => {
+      const { email, token } = await register();
+
+      const other = await request(server)
+        .post("/auth/login")
+        .send({ email, password: PASSWORD })
+        .expect(200);
+
+      await request(server)
+        .post("/auth/logout-all")
+        .set("Authorization", `Bearer ${token}`)
+        .expect(204);
+
+      await stillWorks(token).expect(401);
+      await stillWorks(other.body.token).expect(401);
+    });
+
+    it("y no toca las sesiones de otra persona", async () => {
+      const mine = await register();
+      const theirs = await register();
+
+      await request(server)
+        .post("/auth/logout-all")
+        .set("Authorization", `Bearer ${mine.token}`)
+        .expect(204);
+
+      await stillWorks(theirs.token).expect(200);
+    });
+
+    /**
+     * El guardia pregunta por el usuario, no sólo por la firma.
+     *
+     * Antes, un token de alguien que ya no existe pasaba el control: la firma
+     * seguía siendo válida y nadie iba a comprobar nada más.
+     */
+    it("un token de un usuario que ya no está no vale", async () => {
+      const { token, userId } = await register();
+
+      await prisma.user.delete({ where: { id: userId } });
+
+      await stillWorks(token).expect(401);
+    });
+  });
+
   describe("cuentas", () => {
     it("una cuenta recién abierta empieza a cero", async () => {
       const { token } = await register();

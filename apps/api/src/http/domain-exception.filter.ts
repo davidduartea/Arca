@@ -6,6 +6,8 @@ import {
   EmailAlreadyRegisteredError,
   InvalidCredentialsError,
   NotYourAccountError,
+  SamePasswordError,
+  WrongPasswordError,
 } from "../auth/auth.errors";
 import {
   AlreadyReversedError,
@@ -45,6 +47,13 @@ const TRANSLATIONS: [new (...args: never[]) => Error, Translation][] = [
   // ─── 401 ────────────────────────────────────────────────────────────────
   [InvalidCredentialsError, { status: HttpStatus.UNAUTHORIZED, visible: true }],
 
+  // ─── 403 ────────────────────────────────────────────────────────────────
+  // No es 401 a propósito. La sesión vale; lo que no vale es la contraseña
+  // que se ha escrito en el cuerpo para autorizar el cambio. Con un 401 el
+  // cliente daría la sesión por perdida y echaría a alguien que sólo se ha
+  // equivocado tecleando.
+  [WrongPasswordError, { status: HttpStatus.FORBIDDEN, visible: true }],
+
   // ─── 404 ────────────────────────────────────────────────────────────────
   [UnknownAccountError, { status: HttpStatus.NOT_FOUND, visible: true }],
   [TransactionNotFoundError, { status: HttpStatus.NOT_FOUND, visible: true }],
@@ -69,6 +78,7 @@ const TRANSLATIONS: [new (...args: never[]) => Error, Translation][] = [
   [SameAccountTransferError, { status: HttpStatus.BAD_REQUEST, visible: true }],
   [InvalidCursorError, { status: HttpStatus.BAD_REQUEST, visible: true }],
   [InvalidPageSizeError, { status: HttpStatus.BAD_REQUEST, visible: true }],
+  [SamePasswordError, { status: HttpStatus.BAD_REQUEST, visible: true }],
 
   // ─── 500 ────────────────────────────────────────────────────────────────
   // Que la base rechace una escritura significa que algo llegó hasta ella sin

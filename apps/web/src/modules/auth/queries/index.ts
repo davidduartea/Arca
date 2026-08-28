@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 
 import { ApiError, api } from "@/lib/api";
 import { readToken } from "@/lib/session";
@@ -22,8 +23,14 @@ import type { User } from "@/models/auth/User";
  * Devuelve `null` en vez de lanzar cuando el token caducó: para quien pregunta
  * es el mismo caso — no hay sesión — y así las pantallas no tienen que
  * distinguir entre «nunca entró» y «se le pasó la hora».
+ *
+ * Envuelto en `cache` porque lo preguntan varios sitios del mismo render: el
+ * guardia del layout, la barra para poner el correo y la página que lo enseña.
+ * Sin esto serían tres viajes a `/auth/me` para pintar una pantalla; con esto,
+ * uno — la memoria dura lo que dura la petición y no se comparte entre
+ * personas, que es justo lo que hace falta aquí.
  */
-export async function currentUser(): Promise<User | null> {
+export const currentUser = cache(async (): Promise<User | null> => {
   if (!(await readToken())) return null;
 
   try {
@@ -35,7 +42,7 @@ export async function currentUser(): Promise<User | null> {
 
     throw error;
   }
-}
+});
 
 /**
  * El correo que hay dentro de la cookie, aunque esté caducada.

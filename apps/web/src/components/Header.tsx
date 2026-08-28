@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { NavLink, navItemClass } from "@/components/NavLink";
 import { signOut } from "@/modules/auth/actions";
+import { currentUser } from "@/modules/auth/queries";
 import { wrapClass } from "@/styles/layout";
 
 /**
@@ -47,12 +48,25 @@ export function Header({ signedIn }: { signedIn: boolean }) {
 /** Los enlaces van separados por s4 y la letra es más pequeña que la del cuerpo. */
 const NAV = "flex items-center gap-s4 text-[13px]";
 
-function LedgerNav() {
+async function LedgerNav() {
+  const user = await currentUser();
+
   return (
     <nav className={NAV} aria-label="El libro">
       <NavLink href="/accounts">Cuentas</NavLink>
       <NavLink href="/transfers">Transferir</NavLink>
       <NavLink href="/deposits">Ingresar</NavLink>
+
+      {/*
+        A «Tu cuenta» se entra por el correo, no por un icono de persona: el
+        correo dice **con cuál** de tus cuentas estás dentro, que es la pregunta
+        que de verdad se hace quien mira ahí arriba.
+
+        La consulta no cuesta un viaje extra: `currentUser` está memorizada por
+        petición y el guardia del layout ya la ha hecho.
+      */}
+      {user && <NavLink href="/account">{user.email}</NavLink>}
+
       {/*
         Cerrar sesión es un formulario y no un enlace, porque cambia estado en
         el servidor: borra la cookie. Un GET no debería hacer eso — bastaría con
