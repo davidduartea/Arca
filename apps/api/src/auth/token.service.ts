@@ -9,10 +9,10 @@ export const JWT_SECRET = Symbol("JWT_SECRET");
 /**
  * Una hora.
  *
- * Corto porque este token **no se puede revocar**: una vez firmado vale hasta
- * que caduca, aunque se cierre la sesión o se cambie la contraseña. La respuesta
- * completa a eso es un refresh rotatorio con lista de sesiones en base de datos;
- * mientras no exista, la ventana de daño se limita acortando la vida.
+ * Ya no es la única defensa: desde que el token lleva dentro una versión de
+ * sesión, se puede echar antes de tiempo subiendo la de su dueño. Sigue siendo
+ * corta porque son cosas distintas — la revocación necesita que alguien la
+ * dispare, y la caducidad no necesita a nadie.
  */
 export const TOKEN_TTL_SECONDS = 3600;
 
@@ -31,8 +31,15 @@ export class TokenService {
     });
   }
 
-  async issue(user: AuthenticatedUser): Promise<string> {
-    const payload: TokenPayload = { sub: user.id, email: user.email };
+  /**
+   * Firma un token para este usuario, atado a su versión de sesión.
+   *
+   * La versión entra aquí y no se lee dentro: quien la conoce es el servicio
+   * que acaba de hablar con la base, y hacer que este pregunte por su cuenta
+   * añadiría una consulta a algo que sólo tiene que firmar.
+   */
+  async issue(user: AuthenticatedUser, tokenVersion: number): Promise<string> {
+    const payload: TokenPayload = { sub: user.id, email: user.email, ver: tokenVersion };
 
     return this.jwt.signAsync(payload);
   }

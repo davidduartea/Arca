@@ -14,8 +14,9 @@ import { JWT_SECRET, TokenService } from "./token.service";
     TokenService,
     AuthService,
   ],
-  // `TokenService` sale porque lo necesita el guardia global, que se registra
-  // en el módulo raíz.
-  exports: [TokenService],
+  // Los dos salen porque los necesita el guardia global, que se registra en el
+  // módulo raíz: `TokenService` para comprobar la firma y `AuthService` para
+  // preguntar si esa sesión sigue abierta.
+  exports: [TokenService, AuthService],
 })
 export class AuthModule {}

@@ -18,6 +18,32 @@ export class InvalidCredentialsError extends AuthError {
   }
 }
 
+/**
+ * La contraseña actual que se ha escrito para autorizar el cambio no es la suya.
+ *
+ * Error propio y no `InvalidCredentialsError` por el código de estado que le
+ * toca. Aquí la sesión es válida —el guardia ya la aceptó— y lo que falla es un
+ * dato del cuerpo, así que **no puede salir un 401**: para el cliente, 401
+ * significa una sola cosa, que la sesión ya no vale, y le haría cerrarla y
+ * mandar a la pantalla de acceso a alguien que sólo se ha equivocado
+ * escribiendo. Se traduce a 403.
+ *
+ * Tampoco hace falta el disimulo del inicio de sesión: quien pregunta ya ha
+ * demostrado quién es, así que decirle que se ha equivocado no revela nada.
+ */
+export class WrongPasswordError extends AuthError {
+  constructor() {
+    super("Esa no es tu contraseña actual");
+  }
+}
+
+/** La nueva es la de siempre: cerraría todas las sesiones sin cambiar nada. */
+export class SamePasswordError extends AuthError {
+  constructor() {
+    super("La contraseña nueva tiene que ser distinta de la actual");
+  }
+}
+
 export class EmailAlreadyRegisteredError extends AuthError {
   constructor(readonly email: string) {
     super(`Ya hay una cuenta con el correo ${email}`);
