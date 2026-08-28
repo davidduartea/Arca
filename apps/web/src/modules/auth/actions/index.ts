@@ -8,6 +8,7 @@ import { clearSession, writeSession } from "@/lib/session";
 import { firstMessage, issuesByField } from "@/lib/validation";
 import { credentialsSchema, registrationSchema } from "@/models/auth/Credentials";
 import type { FormState } from "@/models/auth/FormState";
+import { passwordChangeSchema } from "@/models/auth/PasswordChange";
 import type { Session } from "@/models/auth/Session";
 
 /**
@@ -77,6 +78,53 @@ export async function signOut(): Promise<void> {
 }
 
 /**
+ * Cambiar la contraseña.
+ *
+ * La API cierra **todas** las sesiones al hacerlo, la de aquí incluida: si
+ * alguien había entrado con la anterior, dejarle el token vivo convertiría el
+ * cambio en un gesto. Por eso devuelve una sesión nueva y hay que guardarla —
+ * sin eso, quien cuida de su cuenta saldría despedido de su propia pantalla.
+ */
+export async function changePassword(_previous: FormState, form: FormData): Promise<FormState> {
+  const parsed = passwordChangeSchema.safeParse({
+    currentPassword: text(form, "currentPassword"),
+    newPassword: text(form, "newPassword"),
+  });
+
+  if (!parsed.success) {
+    return { error: "Revisa los datos.", issues: issuesByField(parsed.error) };
+  }
+
+  try {
+    const session = await api<Session>("/auth/password", {
+      method: "PATCH",
+      body: parsed.data,
+    });
+
+    await writeSession(session.token, session.expiresInSeconds);
+  } catch (error) {
+    return toPasswordFormState(error);
+  }
+
+  return { ok: true };
+}
+
+/**
+ * Cerrar todas las sesiones, la de aquí incluida.
+ *
+ * Se borra la cookie además de invalidar el token en la API. Sin eso quedaría
+ * en el navegador una cookie que ya no abre nada, y el proxy dejaría pasar a
+ * `/accounts` para que el guardia del layout rebotara a quien entrara: dos
+ * viajes para acabar en el mismo sitio.
+ */
+export async function closeAllSessions(): Promise<void> {
+  await api("/auth/logout-all", { method: "POST" });
+  await clearSession();
+
+  redirect("/login");
+}
+
+/**
  * A donde volver despues de entrar.
  *
  * Solo rutas de esta misma aplicacion. Aceptar una URL completa convertiria el
@@ -109,12 +157,35 @@ function readCredentials(form: FormData): { email: string; password: string } {
  * se respeta esa decisión no marcando ningún campo en rojo.
  */
 function toFormState(error: unknown): FormState {
-  if (!(error instanceof ApiError)) {
-    return { error: "No se pudo conectar con el libro. Inténtalo otra vez." };
-  }
+  if (!(error instanceof ApiError)) return { error: OFFLINE };
 
   if (error.status === 401) return { error: "El correo o la contraseña no son correctos." };
 
+  return commonFailure(error);
+}
+
+/**
+ * Lo mismo, para el cambio de contraseña, donde 401 y 403 no significan lo
+ * mismo que al entrar.
+ *
+ * El 403 es «esa no es tu contraseña actual» y el 401 es «tu sesión ya no
+ * vale». La API los separa a propósito: si equivocarse escribiendo la actual
+ * devolviera 401, el cliente daría la sesión por perdida y echaría a alguien
+ * que sólo ha tecleado mal.
+ */
+function toPasswordFormState(error: unknown): FormState {
+  if (!(error instanceof ApiError)) return { error: OFFLINE };
+
+  if (error.status === 403) return { error: "Esa no es tu contraseña actual." };
+  if (error.status === 401) return { error: "Tu sesión ha caducado. Vuelve a entrar." };
+
+  return commonFailure(error);
+}
+
+const OFFLINE = "No se pudo conectar con el libro. Inténtalo otra vez.";
+
+/** Lo que se lee igual en cualquier formulario: el tope de intentos y los campos. */
+function commonFailure(error: ApiError): FormState {
   if (error.status === 429) {
     return { error: "Demasiados intentos. Espera un minuto y vuelve a probar." };
   }
