@@ -82,6 +82,21 @@
   --spacing-s6: 40px;
 
   /*
+   * Dónde se pliega la barra.
+   *
+   * Las cinco cosas tendidas —con el correo más largo que quepa— piden unos
+   * 640 px, y con los márgenes dejan de caber por debajo de 720. No hay estado
+   * intermedio: o está entera o son tres rayas.
+   *
+   * Es el único punto de ruptura propio del sistema. Se llama `nav` porque eso
+   * es lo que decide, y no `md` o `lg`, que no dicen qué pasa al cruzarlos.
+   *
+   * El número está repetido en `NAV_BREAKPOINT` (`src/styles/layout.ts`), donde
+   * hace falta en JavaScript. Si cambia aquí, cambia allí.
+   */
+  --breakpoint-nav: 720px;
+
+  /*
    * El esqueleto no aparece antes de 300 ms.
    *
    * Si la respuesta llega en ochenta, el parpadeo se nota más que la espera. El
