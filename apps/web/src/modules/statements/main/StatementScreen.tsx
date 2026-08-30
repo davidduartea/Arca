@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { SplitNote } from "@/components/SplitNote";
 import { formatUsd } from "@/lib/money";
 import type { AccountView } from "@/models/accounts/AccountView";
 import type { StatementPageView } from "@/models/statements/StatementPageView";
@@ -20,6 +21,8 @@ export function StatementScreen({
   account: AccountView;
   firstPage: StatementPageView;
 }) {
+  const empty = firstPage.lines.length === 0;
+
   return (
     <>
       <Link
@@ -29,28 +32,47 @@ export function StatementScreen({
         ← Cuentas
       </Link>
 
-      <div className="mt-s2 flex flex-wrap items-end justify-between gap-s5">
+      <div className="mt-s2 flex flex-wrap items-end justify-between gap-s4 nav:gap-s5">
         <div>
-          <p className="font-serif text-[20px] text-ink-3">{account.name}</p>
-          <h1 className="font-serif text-[clamp(38px,8vw,56px)] leading-[1.02] tabular-nums">
+          <p className="font-serif text-[18px] text-ink-3 nav:text-[20px]">{account.name}</p>
+          <h1 className="font-serif text-[clamp(40px,8vw,56px)] leading-[1.02] tabular-nums">
             {formatUsd(account.balance)}
           </h1>
-          <p className="font-mono text-[10.5px] tracking-[0.04em] text-ink-4">
-            derivado de los movimientos · nunca almacenado
+          <p className="font-mono text-[10.5px] leading-[1.5] tracking-[0.04em] text-ink-4">
+            {/*
+              Sin movimientos la frase de siempre sobra: no hay nada de donde
+              derivar nada, y decirlo delante de un $0.00 suena a excusa.
+            */}
+            {empty ? (
+              "no hay nada que sumar"
+            ) : (
+              <SplitNote first="derivado de los movimientos" second="nunca almacenado" />
+            )}
           </p>
         </div>
 
         <ReceiveBox number={account.number} accountName={account.name} />
       </div>
 
-      <img className="mt-s4 mb-[10px] w-full" src="/art/rule.svg" alt="" />
+      {/* El filete adornado es de escritorio: en el teléfono no hay sitio que partir. */}
+      <img className="mt-s4 mb-[10px] hidden w-full nav:block" src="/art/rule.svg" alt="" />
 
-      {/* Bajo el filete y pegado a la derecha, sobre la cabecera de la tabla. */}
-      <div className="mb-s4 flex justify-end">
+      {/*
+        En el escritorio va bajo el filete y pegado a la derecha, sobre la
+        cabecera de la tabla. En el teléfono ocupa el ancho y se pliega sola.
+      */}
+      <div className="mt-s4 mb-s4 border-t border-t-hair pt-s3 nav:mt-0 nav:flex nav:justify-end nav:border-t-0 nav:pt-0">
         <BalanceAt accountId={account.id} />
       </div>
 
-      <Statement accountId={account.id} firstPage={firstPage} openedAt={account.createdAt} />
+      {/*
+        El filete grueso que en la tabla pinta la cabecera de columnas. Cuando
+        no hay cabecera —o no hay tabla, porque la cuenta está en blanco— tiene
+        que ponerlo alguien: es lo que separa el encabezado de lo que se lista.
+      */}
+      <div className="border-t-[1.5px] border-t-green nav:border-t-0">
+        <Statement accountId={account.id} firstPage={firstPage} openedAt={account.createdAt} />
+      </div>
     </>
   );
 }

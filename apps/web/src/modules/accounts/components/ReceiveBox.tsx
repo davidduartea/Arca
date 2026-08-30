@@ -48,7 +48,7 @@ export function ReceiveBox({ number, accountName }: { number: string; accountNam
   }
 
   return (
-    <div className="relative min-w-[250px] overflow-hidden border border-green bg-paper px-[16px] py-[12px] text-right">
+    <div className="relative w-full overflow-hidden border border-green bg-paper px-[16px] py-[12px] nav:w-auto nav:min-w-[250px] nav:text-right">
       <img
         className="pointer-events-none absolute -top-[24px] -left-[38px] w-[130px] opacity-50"
         src="/art/rosette-watermark.svg"
@@ -68,23 +68,27 @@ export function ReceiveBox({ number, accountName }: { number: string; accountNam
         {copied ? (
           // El cuño sustituye al botón, y el texto dice *qué* se copió.
           <p
-            className="mt-s2 flex items-center justify-end gap-[6px] font-mono text-[10.5px] tracking-[0.1em] text-green uppercase"
+            className="mt-s2 flex items-center gap-[6px] font-mono text-[10.5px] tracking-[0.1em] text-green uppercase nav:justify-end"
             role="status"
           >
             <img src="/art/lozenge.svg" alt="" width={20} height={10} className="w-[18px]" />
             Copiado con el prefijo
           </p>
         ) : (
-          <div className="mt-s2 flex justify-end gap-s2">
+          <div className="mt-s2 flex gap-s2 nav:justify-end">
             <button
-              className={button({ tone: "primary", size: "tiny" })}
+              className={button({
+                tone: "primary",
+                size: "tiny",
+                className: "flex-1 nav:flex-none",
+              })}
               type="button"
               onClick={() => void copy()}
             >
               Copiar
             </button>
             <button
-              className={button({ size: "tiny" })}
+              className={button({ size: "tiny", className: "flex-1 nav:flex-none" })}
               type="button"
               onClick={() => {
                 dialog.current?.showModal();
