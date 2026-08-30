@@ -1,43 +1,42 @@
 import Link from "next/link";
 
-import { NavLink, navItemClass } from "@/components/NavLink";
-import { signOut } from "@/modules/auth/actions";
+import { Brand } from "@/components/Brand";
+import { LedgerBar } from "@/components/LedgerBar";
+import { navItemClass } from "@/components/NavLink";
 import { currentUser } from "@/modules/auth/queries";
-import { wrapClass } from "@/styles/layout";
 
 /**
  * La cabecera.
  *
- * Dos formas: la pública, que invita a entrar, y la del libro, con la
- * navegación. Es el mismo componente porque la marca y la banda son idénticas
- * y separarlas obligaría a mantener el ornamento en dos sitios.
+ * Dos barras dentro del mismo marco: la pública, que invita a entrar, y la del
+ * libro, que se pliega en el teléfono. El verde y la banda se pintan aquí una
+ * sola vez — son el marco, y separarlos obligaría a mantener el ornamento en
+ * dos sitios que tienen que salir idénticos.
+ *
+ * El correo se busca aquí, en el servidor, y baja resuelto a la barra. La
+ * consulta no cuesta un viaje extra: `currentUser` está memorizada por petición
+ * y el guardia del layout ya la ha hecho.
  */
-export function Header({ signedIn }: { signedIn: boolean }) {
+export async function Header({ signedIn }: { signedIn: boolean }) {
+  const user = signedIn ? await currentUser() : null;
+
   return (
     <header className="bg-green pt-[14px] text-paper">
-      <div className={wrapClass}>
-        <div className="flex flex-wrap items-center justify-between gap-s4">
-          <Link
-            className="flex items-center gap-[11px] text-paper no-underline"
-            href={signedIn ? "/accounts" : "/"}
-          >
-            <img
-              className="h-[28px] w-[28px]"
-              src="/art/symbol-a-light.svg"
-              alt=""
-              width={28}
-              height={28}
-            />
-            <span className="font-serif text-[23px] leading-none tracking-[0.07em]">Arca</span>
-          </Link>
+      {/*
+        Manda `signedIn` y no el correo. Si la API tose justo al pintar la
+        cabecera, `user` viene vacío — y enseñarle «Abrir una cuenta» a alguien
+        que está dentro de su libro sería peor que enseñar la barra sin el
+        correo.
+      */}
+      {signedIn ? <LedgerBar email={user?.email ?? null} /> : <PublicBar />}
 
-          {signedIn ? <LedgerNav /> : <PublicNav />}
-        </div>
-      </div>
-
-      {/* La banda va a sangre: se estira más allá del ancho de la caja. */}
+      {/*
+        La banda va a sangre: se estira más allá del ancho de la caja. Más fina
+        en el teléfono, porque a 390 px un canto de 15 px pesa tanto como la
+        marca que tiene encima.
+      */}
       <img
-        className="mt-[12px] h-[15px] w-full opacity-[0.38]"
+        className="h-[10px] w-full opacity-[0.38] nav:h-[15px]"
         src="/art/band-light.svg"
         alt=""
       />
@@ -45,60 +44,41 @@ export function Header({ signedIn }: { signedIn: boolean }) {
   );
 }
 
-/** Los enlaces van separados por s4 y la letra es más pequeña que la del cuerpo. */
-const NAV = "flex items-center gap-s4 text-[13px]";
-
-async function LedgerNav() {
-  const user = await currentUser();
-
+/**
+ * La barra de quien no ha entrado. No se pliega nunca.
+ *
+ * Son dos cosas y una es la llamada de la portada: esconderla detrás de tres
+ * rayas sería esconder lo único que la página pide hacer.
+ *
+ * Es el único sitio de la aplicación donde el margen del teléfono cede a 20 px
+ * en vez de 26 — la teja llega hasta su canto, y con el margen de siempre no
+ * cabría entera a 390 px. Por eso el ancho se escribe a mano aquí y no sale de
+ * `wrapClass`: es una excepción, y como excepción se ve.
+ */
+function PublicBar() {
   return (
-    <nav className={NAV} aria-label="El libro">
-      <NavLink href="/accounts">Cuentas</NavLink>
-      <NavLink href="/transfers">Transferir</NavLink>
-      <NavLink href="/deposits">Ingresar</NavLink>
+    <div className="mx-auto w-full max-w-[980px] px-[20px] pb-[12px] nav:px-s5">
+      <div className="flex items-center justify-between gap-s4">
+        <Brand href="/" />
 
-      {/*
-        A «Tu cuenta» se entra por el correo, no por un icono de persona: el
-        correo dice **con cuál** de tus cuentas estás dentro, que es la pregunta
-        que de verdad se hace quien mira ahí arriba.
+        <nav className="flex items-center gap-s4 text-[13px]" aria-label="Acceso">
+          <Link className={navItemClass} href="/login">
+            Acceder
+          </Link>
 
-        La consulta no cuesta un viaje extra: `currentUser` está memorizada por
-        petición y el guardia del layout ya la ha hecho.
-      */}
-      {user && <NavLink href="/account">{user.email}</NavLink>}
-
-      {/*
-        Cerrar sesión es un formulario y no un enlace, porque cambia estado en
-        el servidor: borra la cookie. Un GET no debería hacer eso — bastaría con
-        que algo precargara el enlace para echar a alguien de su sesión.
-      */}
-      <form action={signOut}>
-        <button className={navItemClass} type="submit">
-          Salir
-        </button>
-      </form>
-    </nav>
-  );
-}
-
-function PublicNav() {
-  return (
-    <nav className={NAV} aria-label="Acceso">
-      <Link className={navItemClass} href="/login">
-        Acceder
-      </Link>
-
-      {/*
-        La llamada invierte la teja: papel sobre verde. El `hover:` del color de
-        letra no sobra — sin él, la regla general de los enlaces lo aclararía y
-        el botón parecería otra cosa.
-      */}
-      <Link
-        className="bg-paper px-[15px] py-[7px] font-medium text-green no-underline hover:text-green-light"
-        href="/register"
-      >
-        Abrir una cuenta
-      </Link>
-    </nav>
+          {/*
+            La llamada invierte la teja: papel sobre verde. El `hover:` del
+            color de letra no sobra — sin él, la regla general de los enlaces lo
+            aclararía y el botón parecería otra cosa.
+          */}
+          <Link
+            className="bg-paper px-[15px] py-[7px] font-medium text-green no-underline hover:text-green-light"
+            href="/register"
+          >
+            Abrir una cuenta
+          </Link>
+        </nav>
+      </div>
+    </div>
   );
 }
