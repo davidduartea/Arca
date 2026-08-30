@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useState } from "react";
+import { useActionState, useEffect } from "react";
 
 import { Notice } from "@/components/Notice";
 import { formatUsd } from "@/lib/money";
 import type { AccountView } from "@/models/accounts/AccountView";
 import { EMPTY_MOVE } from "@/models/transfers/MoveState";
 import { deposit } from "@/modules/transfers/actions";
+import { DEPOSIT_DRAFT, useDraft } from "@/modules/transfers/draft";
 import {
   doneActionsClass,
   doneAmountClass,
@@ -31,11 +32,31 @@ import { fieldClass, inputClass, labelClass } from "@/styles/form";
  */
 export function DepositForm({ accounts }: { accounts: AccountView[] }) {
   const [state, act, pending] = useActionState(deposit, EMPTY_MOVE);
-  const [toAccountId, setToAccountId] = useState(accounts[0]?.id ?? "");
 
-  // Nace en el navegador para que un reintento traiga la misma: es lo que
-  // permite a la API reconocer el duplicado en vez de ingresar dos veces.
-  const [idempotencyKey] = useState(() => crypto.randomUUID());
+  /**
+   * Lo escrito, guardado por si hay que salir y volver.
+   *
+   * Los campos van controlados por eso y sólo por eso: sin pasar por React no
+   * hay nada que guardar. La clave de idempotencia viaja con ellos — nace en el
+   * navegador para que un reintento traiga la misma, que es lo que permite a la
+   * API reconocer el duplicado en vez de ingresar dos veces.
+   */
+  const { draft, update, discard } = useDraft(DEPOSIT_DRAFT, () => ({
+    idempotencyKey: crypto.randomUUID(),
+    toAccountId: accounts[0]?.id ?? "",
+    amount: "",
+    description: "",
+  }));
+
+  const { idempotencyKey, toAccountId, amount, description } = draft;
+
+  // Ingresado: no queda nada que rescatar.
+  // `discard` se rehace en cada render y no entra en las dependencias a
+  // propósito: lo que dispara esto es que el ingreso terminara, no que la
+  // función cambie de identidad.
+  useEffect(() => {
+    if (state.done) discard();
+  }, [state.done]);
 
   if (state.done) {
     return (
@@ -78,7 +99,7 @@ export function DepositForm({ accounts }: { accounts: AccountView[] }) {
           name="toAccountId"
           value={toAccountId}
           onChange={(event) => {
-            setToAccountId(event.target.value);
+            update({ toAccountId: event.target.value });
           }}
           required
         >
@@ -99,6 +120,10 @@ export function DepositForm({ accounts }: { accounts: AccountView[] }) {
           id="amount"
           name="amount"
           inputMode="decimal"
+          value={amount}
+          onChange={(event) => {
+            update({ amount: event.target.value });
+          }}
           placeholder="0.00"
           required
         />
@@ -112,6 +137,10 @@ export function DepositForm({ accounts }: { accounts: AccountView[] }) {
           className={inputClass}
           id="description"
           name="description"
+          value={description}
+          onChange={(event) => {
+            update({ description: event.target.value });
+          }}
           placeholder="Nómina de agosto"
           maxLength={140}
         />

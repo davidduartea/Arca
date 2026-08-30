@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 
 import { Notice } from "@/components/Notice";
 import { formatAccountNumber } from "@/lib/account-number";
@@ -10,6 +10,7 @@ import type { AccountView } from "@/models/accounts/AccountView";
 import type { Destination } from "@/models/transfers/Destination";
 import { EMPTY_MOVE } from "@/models/transfers/MoveState";
 import { transfer } from "@/modules/transfers/actions";
+import { TRANSFER_DRAFT, useDraft } from "@/modules/transfers/draft";
 import { ArcaNumberField } from "@/modules/transfers/components/ArcaNumberField";
 import {
   doneActionsClass,
@@ -33,27 +34,43 @@ import { fieldClass, inputClass, labelClass } from "@/styles/form";
 export function TransferForm({ accounts }: { accounts: AccountView[] }) {
   const [state, act, pending] = useActionState(transfer, EMPTY_MOVE);
   const [confirming, setConfirming] = useState(false);
+  const [destination, setDestination] = useState<Destination>({ kind: "incomplete" });
 
   /**
-   * La clave de idempotencia.
+   * Lo escrito, y una clave para el movimiento.
    *
-   * Nace aquí, en el navegador, y **sobrevive a los reintentos**: si la red se
-   * cae y se vuelve a enviar, va la misma clave y la API devuelve el movimiento
-   * original en vez de cobrar dos veces. Generarla en el servidor la haría
-   * inútil — cada reintento traería una distinta y no habría nada que
-   * reconocer.
+   * Va todo junto en un borrador que sobrevive a salir de la página porque la
+   * sesión caduca a la hora, y la pantalla que lo cuenta promete que se sigue
+   * donde se estaba. Un importe, un número de doce cifras y un concepto no son
+   * algo que se deba pedir dos veces.
+   *
+   * La clave de idempotencia entra en el borrador con lo demás, y es lo que
+   * hace que volver sea seguro: si el envío llegó a salir antes de que la sesión
+   * venciera, reenviarlo con la misma clave devuelve aquel movimiento en vez de
+   * cobrar dos veces. Nace en el navegador justamente por eso — generarla en el
+   * servidor daría una distinta en cada intento y no habría nada que reconocer.
    *
    * Sólo se renueva al empezar un movimiento nuevo.
    */
-  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
+  const { draft, update, discard, reset } = useDraft(TRANSFER_DRAFT, () => ({
+    idempotencyKey: crypto.randomUUID(),
+    fromAccountId: accounts[0]?.id ?? "",
+    toNumber: "",
+    amount: "",
+    description: "",
+  }));
 
-  const [fromAccountId, setFromAccountId] = useState(accounts[0]?.id ?? "");
-  const [toNumber, setToNumber] = useState("");
-  const [destination, setDestination] = useState<Destination>({ kind: "incomplete" });
-  const [amount, setAmount] = useState("");
-  const [description, setDescription] = useState("");
-
+  const { idempotencyKey, fromAccountId, toNumber, amount, description } = draft;
   const source = accounts.find((account) => account.id === fromAccountId);
+
+  // Salió: ya no hay nada que rescatar, y dejarlo guardado haría que la próxima
+  // visita restaurara una transferencia que ya está en el extracto.
+  // `discard` se rehace en cada render y no entra en las dependencias a
+  // propósito: lo que dispara esto es que el movimiento terminara, no que la
+  // función cambie de identidad.
+  useEffect(() => {
+    if (state.done) discard();
+  }, [state.done]);
 
   if (state.done) {
     return (
@@ -62,13 +79,10 @@ export function TransferForm({ accounts }: { accounts: AccountView[] }) {
         accountId={fromAccountId}
         onAgain={() => {
           setConfirming(false);
-          setAmount("");
-          setToNumber("");
           setDestination({ kind: "incomplete" });
-          setDescription("");
           // Movimiento nuevo, clave nueva: si no, el segundo se tomaría por un
           // reintento del primero y la API devolvería aquél sin mover nada.
-          setIdempotencyKey(crypto.randomUUID());
+          reset();
         }}
       />
     );
@@ -159,7 +173,7 @@ export function TransferForm({ accounts }: { accounts: AccountView[] }) {
           id="from"
           value={fromAccountId}
           onChange={(event) => {
-            setFromAccountId(event.target.value);
+            update({ fromAccountId: event.target.value });
           }}
           required
         >
@@ -172,7 +186,13 @@ export function TransferForm({ accounts }: { accounts: AccountView[] }) {
       </div>
 
       {/* Sin destinatarios guardados: el número se escribe o se pega cada vez. */}
-      <ArcaNumberField value={toNumber} onChange={setToNumber} onDestination={setDestination} />
+      <ArcaNumberField
+        value={toNumber}
+        onChange={(typed) => {
+          update({ toNumber: typed });
+        }}
+        onDestination={setDestination}
+      />
 
       <div className={fieldClass}>
         <label className={labelClass} htmlFor="amount">
@@ -184,7 +204,7 @@ export function TransferForm({ accounts }: { accounts: AccountView[] }) {
           inputMode="decimal"
           value={amount}
           onChange={(event) => {
-            setAmount(event.target.value);
+            update({ amount: event.target.value });
           }}
           placeholder="0.00"
           required
@@ -200,7 +220,7 @@ export function TransferForm({ accounts }: { accounts: AccountView[] }) {
           id="description"
           value={description}
           onChange={(event) => {
-            setDescription(event.target.value);
+            update({ description: event.target.value });
           }}
           placeholder="Alquiler de septiembre"
           maxLength={140}
