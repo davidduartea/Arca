@@ -223,6 +223,26 @@ describe("API HTTP", () => {
         .send({ name: "  " })
         .expect(400);
     });
+
+    /**
+     * Lo que de verdad guarda `z.strictObject`.
+     *
+     * Un campo que nadie esperaba es un 400 y no un campo que se ignora en
+     * silencio. Aquí el de más es `tokenVersion`, que es una columna de verdad:
+     * mientras el esquema se lo tragaba, el objeto validado no era el objeto
+     * que salía de él.
+     */
+    it("un campo que nadie pidió es un 400", async () => {
+      await request(server)
+        .post("/auth/register")
+        .send({
+          name: NAME,
+          email: "ana@arca.test",
+          password: PASSWORD,
+          tokenVersion: 99,
+        })
+        .expect(400);
+    });
   });
 
   describe("el guardia es global", () => {
@@ -406,18 +426,31 @@ describe("API HTTP", () => {
       expect(response.body.balance).toBe("0");
     });
 
-    it("no deja abrir una cuenta de sistema", async () => {
+    /**
+     * Antes el `kind` se ignoraba en silencio; ahora es un 400.
+     *
+     * Lo segundo es mejor por lo mismo que `z.strictObject` existe: mientras el
+     * campo se colaba y se tiraba, el objeto validado no era el objeto que
+     * salía del esquema, y bastaba un `data: body` en cualquier escritura para
+     * que llegara a la base. Y quien lo mandó se entera de que no se le hizo
+     * caso, en vez de creer que abrió una cuenta de sistema.
+     */
+    it("no deja ni intentar abrir una cuenta de sistema", async () => {
       const { token } = await register();
 
-      const response = await request(server)
+      await request(server)
         .post("/accounts")
         .set("Authorization", `Bearer ${token}`)
         .send({ name: "Trampa", kind: "SYSTEM" })
-        .expect(201);
+        .expect(400);
 
-      // El campo se ignora. Si se aceptara, cualquiera abriría una cuenta que
-      // se salta la comprobación de fondos y se transferiría dinero de la nada.
-      expect(response.body.kind).toBe("USER");
+      // Y no se ha abierto nada.
+      const response = await request(server)
+        .get("/accounts")
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+
+      expect(response.body.accounts).toHaveLength(0);
     });
 
     it("cada cual sólo ve las suyas", async () => {

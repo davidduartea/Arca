@@ -40,7 +40,7 @@ const LOOKUP_LIMIT = { default: { limit: 20, ttl: 60_000 } };
  * Es el mismo caso que en el controlador del extracto.
  */
 // eslint-disable-next-line no-useless-assignment
-const lookupQuerySchema = z.object({
+const lookupQuerySchema = z.strictObject({
   number: z.string().trim().min(1, "hace falta un número de arca").max(32),
 });
 

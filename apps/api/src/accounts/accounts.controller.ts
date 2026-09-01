@@ -28,9 +28,9 @@ import { AccountsService } from "./accounts.service";
  */
 const ACCOUNT_NAME = z.string().trim().min(1, "hace falta un nombre").max(80);
 
-const newAccountSchema = z.object({ name: ACCOUNT_NAME });
+const newAccountSchema = z.strictObject({ name: ACCOUNT_NAME });
 
-const renameSchema = z.object({ name: ACCOUNT_NAME });
+const renameSchema = z.strictObject({ name: ACCOUNT_NAME });
 
 const accountIdSchema = z.string().uuid("no es un identificador de cuenta");
 

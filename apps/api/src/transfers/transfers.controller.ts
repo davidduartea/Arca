@@ -58,7 +58,7 @@ const REVERSAL_LIMIT = { default: { limit: 20, ttl: 60_000 } };
  */
 const arcaNumberSchema = z.string().trim().min(12, "un numero de arca son doce cifras").max(32);
 
-const transferOrderSchema = z.object({
+const transferOrderSchema = z.strictObject({
   fromAccountId: accountIdSchema,
   toAccountNumber: arcaNumberSchema,
   amount: amountInCents,
@@ -66,7 +66,7 @@ const transferOrderSchema = z.object({
   idempotencyKey: z.string().trim().min(8).max(128).optional(),
 });
 
-const depositOrderSchema = z.object({
+const depositOrderSchema = z.strictObject({
   toAccountId: accountIdSchema,
   amount: amountInCents,
   description: z.string().trim().min(1).max(140).optional(),

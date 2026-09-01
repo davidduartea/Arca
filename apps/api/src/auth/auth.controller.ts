@@ -43,7 +43,7 @@ const PASSWORD = z.string().min(12, "hacen falta al menos 12 caracteres").max(20
  */
 const PERSON_NAME = z.string().trim().min(1, "hace falta un nombre").max(80);
 
-const credentialsSchema = z.object({
+const credentialsSchema = z.strictObject({
   email: z.string().trim().max(254).regex(EMAIL_SHAPE, "no parece un correo"),
   password: PASSWORD,
 });
@@ -52,7 +52,7 @@ const registrationSchema = credentialsSchema.extend({ name: PERSON_NAME });
 
 const nameChangeSchema = z.strictObject({ name: PERSON_NAME });
 
-const passwordChangeSchema = z.object({
+const passwordChangeSchema = z.strictObject({
   // La actual sólo tiene que estar. Medirla con la regla de arriba rechazaría
   // por corta una contraseña que de verdad es la suya, y el mensaje hablaría de
   // la longitud cuando el problema es otro.
