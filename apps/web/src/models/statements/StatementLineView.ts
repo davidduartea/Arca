@@ -10,6 +10,11 @@ export interface StatementLineView {
   /** El saldo de la cuenta justo **después** de este asiento. */
   balance: string;
 
+  /** Si este movimiento corrige a otro anterior. */
   isReversal: boolean;
+
+  /** Si a este movimiento ya lo anularon. Decide si se puede ofrecer anularlo. */
+  isReversed: boolean;
+
   createdAt: string;
 }
