@@ -55,7 +55,17 @@ jobs:
       # El puerto es el 5432 y no el 5433 de `docker-compose.yml`: alli se
       # desplaza para no chocar con otras bases en la misma maquina, y aqui el
       # contenedor tiene la suya para el solo.
-      DATABASE_URL: postgresql://arca:arca@localhost:5432/arca?schema=public
+      #
+      # Tres conexiones a la misma base y tres autoridades. `DIRECT_URL` es la
+      # duena, la unica que migra.
+      #
+      # Las otras dos no llegan a abrirse en este trabajo: los tests se conectan
+      # a `arca_test`, que el arranque de Vitest crea, migra y a la que anade los
+      # usuarios de cada rol. Estan aqui porque el esquema de entorno las exige y
+      # sin ellas nada arrancaria — que es exactamente lo que se quiere de una
+      # variable sin la cual se pierde una frontera.
+      DATABASE_URL: postgresql://arca_ledger_local:arca-local@localhost:5432/arca?schema=public
+      READER_DATABASE_URL: postgresql://arca_reader_local:arca-local@localhost:5432/arca?schema=public
       DIRECT_URL: postgresql://arca:arca@localhost:5432/arca?schema=public
 
       # Base aparte, que los tests vacian entre casos. El arranque de Vitest la

@@ -15,6 +15,7 @@
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "db:reset": "prisma migrate reset --force",
+    "db:roles": "node scripts/local-roles.mjs",
     "ledger:audit": "nest start --entryFile audit/audit.cli",
     "ledger:audit:built": "node dist/audit/audit.cli.js"
   },

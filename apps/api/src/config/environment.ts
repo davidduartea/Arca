@@ -7,6 +7,15 @@ import { z } from "zod";
  * la configuración a medias es peor que uno que no levanta, porque parece sano
  * hasta que alguien lo usa.
  */
+/** Las dos cadenas de conexión se validan igual, así que la forma se escribe una vez. */
+const postgresUrl = z
+  .string()
+  .min(1, "hace falta la cadena de conexión")
+  .refine(
+    (url) => url.startsWith("postgresql://") || url.startsWith("postgres://"),
+    "debe ser una URL de PostgreSQL",
+  );
+
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 
@@ -31,13 +40,28 @@ const schema = z.object({
    */
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(0),
 
-  DATABASE_URL: z
-    .string()
-    .min(1, "hace falta la cadena de conexión")
-    .refine(
-      (url) => url.startsWith("postgresql://") || url.startsWith("postgres://"),
-      "debe ser una URL de PostgreSQL",
-    ),
+  /**
+   * Con qué conexión se mueve el dinero.
+   *
+   * El usuario de esta cadena tiene que ser miembro de `arca_ledger`: ve el
+   * libro entero porque una transferencia toca la cuenta de otro, pero no puede
+   * reescribir un asiento ni tocar los triggers.
+   */
+  DATABASE_URL: postgresUrl,
+
+  /**
+   * Con qué conexión se sirve a alguien lo suyo.
+   *
+   * Miembro de `arca_reader`, y ahí sólo lee, y sólo lo que le pertenece a quien
+   * pregunta — lo impone la base con RLS, no una comprobación del código.
+   *
+   * **Obligatoria, sin respaldo a `DATABASE_URL`.** Un respaldo la haría
+   * opcional de hecho: quien se olvidara de ponerla tendría una aplicación que
+   * arranca, funciona igual y ha perdido la frontera sin decírselo a nadie. Es
+   * justo la clase de fallo que esta separación existe para evitar, así que
+   * falta la variable, falta el arranque.
+   */
+  READER_DATABASE_URL: postgresUrl,
 });
 
 export type Environment = z.infer<typeof schema>;

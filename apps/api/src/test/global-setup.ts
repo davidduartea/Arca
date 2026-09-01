@@ -38,6 +38,18 @@ export default async function setup(): Promise<void> {
       DIRECT_URL: TEST_DATABASE_URL,
     },
   });
+
+  // Y después de migrar, porque los roles de grupo a los que esto concede
+  // membresía los crea la propia migración.
+  //
+  // La aplicación bajo test se conecta con estos usuarios y no como dueña, que
+  // es la única forma de que los tests digan algo sobre los permisos que tendrá
+  // en producción: la dueña se salta RLS y puede con todo, así que una suite
+  // entera pasaría en verde sobre una frontera que allí no existiría.
+  execSync("node scripts/local-roles.mjs", {
+    stdio: "ignore",
+    env: { ...process.env, DATABASE_OWNER_URL: TEST_DATABASE_URL },
+  });
 }
 
 /**

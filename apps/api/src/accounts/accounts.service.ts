@@ -6,6 +6,7 @@ import { isUniqueViolationOn } from "../prisma/postgres-errors";
 import { generateAccountNumber, parseAccountNumber } from "../shared/account-number";
 import { UnknownAccountError } from "../ledger/ledger.errors";
 import { PrismaService } from "../prisma/prisma.service";
+import { ReaderService } from "../prisma/reader.service";
 import { isUuid } from "../shared/uuid";
 import type { Account, AccountDraft, AccountHolder } from "./accounts.types";
 
@@ -31,7 +32,10 @@ interface AccountRow {
  */
 @Injectable()
 export class AccountsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly reader: ReaderService,
+  ) {}
 
   /**
    * Abre una cuenta y le da su número.
@@ -236,13 +240,25 @@ export class AccountsService {
     return account;
   }
 
+  /**
+   * Las cuentas de alguien.
+   *
+   * La única lectura de este servicio que va por el rol lector, y por eso lleva
+   * la condición dicha dos veces: el `where` la escribe y la política de la base
+   * la impone. No es redundancia — es que si alguien borrara el `where` un día,
+   * esto seguiría devolviendo sólo lo suyo en vez de el libro entero.
+   *
+   * Lo que se queda con el rol del libro es todo lo demás de aquí, y por motivos
+   * concretos: `requireOwnedBy` **necesita** ver la cuenta ajena para poder
+   * decir «no es tuya», y `holderByNumber` existe justamente para contestar de
+   * quién es un número que no es tuyo.
+   */
   async byOwner(ownerId: string): Promise<Account[]> {
     if (!isUuid(ownerId)) return [];
 
-    const rows = await this.prisma.account.findMany({
-      where: { ownerId },
-      orderBy: { createdAt: "asc" },
-    });
+    const rows = await this.reader.asUser(ownerId, (db) =>
+      db.account.findMany({ where: { ownerId }, orderBy: { createdAt: "asc" } }),
+    );
 
     return rows.map(toAccount);
   }

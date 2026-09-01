@@ -56,7 +56,7 @@ export class StatementsController {
     // de otro por el tiempo que tarda la respuesta, aunque el cuerpo no salga.
     await this.accounts.requireOwnedBy(accountId, user.id);
 
-    return statementPageView(await this.statements.statement(accountId, query));
+    return statementPageView(await this.statements.statement(user.id, accountId, query));
   }
 
   @Get("balance")
@@ -69,7 +69,7 @@ export class StatementsController {
     await this.accounts.requireOwnedBy(accountId, user.id);
 
     return {
-      balance: toWire(await this.statements.balanceAt(accountId, query.at)),
+      balance: toWire(await this.statements.balanceAt(user.id, accountId, query.at)),
       at: query.at.toISOString(),
     };
   }
