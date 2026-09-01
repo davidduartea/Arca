@@ -87,6 +87,14 @@ model Account {
   /// contable de «el mundo exterior» — que sí puede quedar en negativo.
   kind AccountKind @default(USER)
 
+  /// Cuándo se cerró, si se cerró.
+  ///
+  /// Cerrar no borra: los asientos apuntan aquí y son inmutables. Lo que hace
+  /// es sacarla de circulación —ni manda ni recibe— dejando su extracto
+  /// legible, y se puede deshacer. Las de sistema no se cierran nunca, y eso lo
+  /// sujeta un `CHECK` en la base.
+  closedAt DateTime? @map("closed_at")
+
   createdAt DateTime @default(now()) @map("created_at")
 
   entries Entry[]

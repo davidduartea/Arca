@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 
 import { NotYourAccountError } from "../auth/auth.errors";
+import { AccountClosedError, AccountNotEmptyError } from "./accounts.errors";
 import { isUniqueViolationOn } from "../prisma/postgres-errors";
 import { generateAccountNumber, parseAccountNumber } from "../shared/account-number";
 import { UnknownAccountError } from "../ledger/ledger.errors";
@@ -18,6 +19,7 @@ interface AccountRow {
   name: string;
   number: string;
   kind: string;
+  closedAt: Date | null;
   createdAt: Date;
 }
 
@@ -115,13 +117,14 @@ export class AccountsService {
 
     const row = await this.prisma.account.findUnique({
       where: { number },
-      select: { kind: true, owner: { select: { name: true } } },
+      select: { kind: true, closedAt: true, owner: { select: { name: true } } },
     });
     if (!row) return null;
 
     return {
       name: row.owner.name,
       kind: row.kind === "SYSTEM" ? "SYSTEM" : "USER",
+      closed: row.closedAt !== null,
     };
   }
 
@@ -137,6 +140,98 @@ export class AccountsService {
     const account = await this.byId(accountId);
     if (!account) throw new UnknownAccountError(accountId);
     if (account.ownerId !== ownerId) throw new NotYourAccountError(accountId);
+
+    return account;
+  }
+
+  /**
+   * Le cambia el nombre. Nada más.
+   *
+   * El nombre de una cuenta es una etiqueta para su dueño y no la identifica:
+   * quien la identifica es el número, que no se toca. Por eso renombrar no
+   * tiene consecuencias en ninguna parte — el extracto, los asientos y lo que
+   * ve quien te transfiere siguen igual.
+   */
+  async rename(accountId: string, ownerId: string, name: string): Promise<Account> {
+    await this.requireOwnedBy(accountId, ownerId);
+
+    return toAccount(
+      await this.prisma.account.update({ where: { id: accountId }, data: { name } }),
+    );
+  }
+
+  /**
+   * La saca de circulación, sin borrar nada.
+   *
+   * Borrar no es una opción y no por pereza: los asientos apuntan a la cuenta y
+   * son inmutables, así que borrarla dejaría un extracto que habla de algo que
+   * no existe. Cerrar es marcarla — deja de poder mandar y de poder recibir, y
+   * su extracto se sigue leyendo entero.
+   *
+   * **Sólo se cierra a cero.** Con dinero dentro, cerrar sería esconderlo: la
+   * cuenta desaparece de las que se pueden usar y el saldo se queda ahí, sin
+   * que nadie haya dicho a dónde iba. Que lo saque su dueño primero.
+   *
+   * Cerrar dos veces no es un error: quien pide lo que ya está hecho quería
+   * exactamente el estado en el que está. Se devuelve la cuenta tal cual, sin
+   * mover la fecha — moverla convertiría un doble clic en una fecha de cierre
+   * falsa.
+   *
+   * El saldo llega como función y no como número para que no se calcule antes
+   * de saber que la cuenta es suya: sumar los asientos de la cuenta de otro
+   * para tirar el resultado es trabajo regalado a quien prueba identificadores.
+   * Y sobra del todo si ya estaba cerrada.
+   */
+  async close(
+    accountId: string,
+    ownerId: string,
+    balanceOf: () => Promise<bigint>,
+  ): Promise<Account> {
+    const account = await this.requireOwnedBy(accountId, ownerId);
+    if (account.closedAt) return account;
+
+    const balance = await balanceOf();
+    if (balance !== 0n) throw new AccountNotEmptyError(accountId, balance);
+
+    return toAccount(
+      await this.prisma.account.update({
+        where: { id: accountId },
+        data: { closedAt: new Date() },
+      }),
+    );
+  }
+
+  /**
+   * La vuelve a poner en circulación.
+   *
+   * Cerrar tiene que poder deshacerse. Aquí no hay administrador a quien
+   * escribirle, así que un cierre irreversible convertiría un clic de más en
+   * una cuenta perdida para siempre — con su número, que es lo que la gente ya
+   * dio a otros.
+   */
+  async reopen(accountId: string, ownerId: string): Promise<Account> {
+    const account = await this.requireOwnedBy(accountId, ownerId);
+    if (!account.closedAt) return account;
+
+    return toAccount(
+      await this.prisma.account.update({
+        where: { id: accountId },
+        data: { closedAt: null },
+      }),
+    );
+  }
+
+  /**
+   * La cuenta, si es de quien pregunta **y sigue abierta**.
+   *
+   * Lo que usa quien va a mover dinero. Separado de `requireOwnedBy` a
+   * propósito: leer el extracto de una cuenta cerrada tiene que seguir siendo
+   * posible — es el histórico de lo que pasó — y sólo se cierra la puerta a lo
+   * que la usaría como cuenta viva.
+   */
+  async requireUsable(accountId: string, ownerId: string): Promise<Account> {
+    const account = await this.requireOwnedBy(accountId, ownerId);
+    if (account.closedAt) throw new AccountClosedError(accountId);
 
     return account;
   }
@@ -160,6 +255,7 @@ function toAccount(row: AccountRow): Account {
     name: row.name,
     number: row.number,
     kind: row.kind === "SYSTEM" ? "SYSTEM" : "USER",
+    closedAt: row.closedAt,
     createdAt: row.createdAt,
   };
 }

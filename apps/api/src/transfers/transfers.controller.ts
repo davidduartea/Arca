@@ -94,16 +94,17 @@ export class TransfersController {
     @Body(new ZodValidationPipe(transferOrderSchema))
     body: z.output<typeof transferOrderSchema>,
   ): Promise<TransactionView> {
-    await this.accounts.requireOwnedBy(body.fromAccountId, user.id);
+    await this.accounts.requireUsable(body.fromAccountId, user.id);
 
     const { toAccountNumber, ...order } = body;
     const destination = await this.accounts.byNumber(toAccountNumber);
 
     // Mismo rechazo si el dígito de control no cuadra, si el número no está
-    // emitido o si apunta a una cuenta de sistema: quien transfiere no tiene
-    // por qué distinguirlos, y distinguirlos serviría para ir mapeando qué
-    // números existen.
-    if (!destination || destination.kind === "SYSTEM") {
+    // emitido, si apunta a una cuenta de sistema o si está cerrada: quien
+    // transfiere no tiene por qué distinguirlos, y distinguirlos serviría para
+    // ir mapeando qué números existen. Que una cerrada conteste como una
+    // inexistente es además lo cierto — a ese número ya no llega el dinero.
+    if (!destination || destination.kind === "SYSTEM" || destination.closedAt) {
       throw new NotFoundException({
         error: "UnknownAccountError",
         message: "No encontramos ninguna arca con ese número",
@@ -130,7 +131,7 @@ export class TransfersController {
     @CurrentUser() user: AuthenticatedUser,
     @Body(new ZodValidationPipe(depositOrderSchema)) body: z.output<typeof depositOrderSchema>,
   ): Promise<TransactionView> {
-    await this.accounts.requireOwnedBy(body.toAccountId, user.id);
+    await this.accounts.requireUsable(body.toAccountId, user.id);
 
     return transactionView(
       await this.transfers.transfer({

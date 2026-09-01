@@ -800,6 +800,252 @@ describe("API HTTP", () => {
     });
   });
 
+  describe("renombrar y cerrar cuentas", () => {
+    const rename = (token: string, accountId: string, name: string) =>
+      request(server)
+        .patch(`/accounts/${accountId}`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ name });
+
+    const close = (token: string, accountId: string) =>
+      request(server)
+        .post(`/accounts/${accountId}/closure`)
+        .set("Authorization", `Bearer ${token}`);
+
+    const reopen = (token: string, accountId: string) =>
+      request(server)
+        .delete(`/accounts/${accountId}/closure`)
+        .set("Authorization", `Bearer ${token}`);
+
+    it("se le puede cambiar el nombre, y el número no se mueve", async () => {
+      const { token } = await register();
+      const account = await openAccountNumber(token, "Cuenta corirente");
+
+      const response = await rename(token, account.id, "Cuenta corriente").expect(200);
+
+      expect(response.body.name).toBe("Cuenta corriente");
+      expect(response.body.number).toBe(account.number);
+    });
+
+    it("renombrar la de otro es el mismo 404 que una que no existe", async () => {
+      const luis = await register();
+      const theirs = await openAccount(luis.token);
+      const ana = await register();
+
+      const ajena = await rename(ana.token, theirs, "Mía ahora").expect(404);
+      const inventada = await rename(ana.token, randomUUID(), "Mía ahora").expect(404);
+
+      expect(ajena.body).toEqual(inventada.body);
+    });
+
+    it("un nombre en blanco no vale", async () => {
+      const { token } = await register();
+      const accountId = await openAccount(token);
+
+      await rename(token, accountId, "   ").expect(400);
+    });
+
+    it("una cuenta a cero se cierra, y deja constancia de cuándo", async () => {
+      const { token } = await register();
+      const accountId = await openAccount(token);
+
+      const response = await close(token, accountId).expect(200);
+
+      expect(response.body.closedAt).toEqual(expect.any(String));
+    });
+
+    /**
+     * La regla que hace que cerrar signifique algo.
+     *
+     * Cerrar con dinero dentro sería esconderlo: la cuenta sale de las que se
+     * pueden usar y el saldo se queda ahí sin que nadie haya dicho a dónde iba.
+     */
+    it("una cuenta con dinero no se cierra, y el mensaje dice cuánto", async () => {
+      const { token } = await register();
+      const accountId = await openAccount(token);
+      await deposit(token, accountId, "2500").expect(201);
+
+      const response = await close(token, accountId).expect(409);
+
+      expect(response.body.message).toContain("$25.00");
+    });
+
+    it("cerrada no manda dinero", async () => {
+      const ana = await register();
+      const anaAccount = await openAccountNumber(ana.token);
+      const luis = await register();
+      const luisAccount = await openAccountNumber(luis.token);
+      await close(ana.token, anaAccount.id).expect(200);
+
+      await request(server)
+        .post("/transfers")
+        .set("Authorization", `Bearer ${ana.token}`)
+        .send({
+          fromAccountId: anaAccount.id,
+          toAccountNumber: luisAccount.number,
+          amount: "100",
+        })
+        .expect(409);
+    });
+
+    it("cerrada tampoco recibe, ni se resuelve su número", async () => {
+      const ana = await register();
+      const anaAccount = await openAccountNumber(ana.token);
+      await deposit(ana.token, anaAccount.id, "10000").expect(201);
+
+      const luis = await register();
+      const luisAccount = await openAccountNumber(luis.token);
+      await close(luis.token, luisAccount.id).expect(200);
+
+      // Para quien va a mandar, una cerrada contesta como una que no existe.
+      await request(server)
+        .get(`/accounts/lookup?number=${luisAccount.number}`)
+        .set("Authorization", `Bearer ${ana.token}`)
+        .expect(404);
+
+      await request(server)
+        .post("/transfers")
+        .set("Authorization", `Bearer ${ana.token}`)
+        .send({
+          fromAccountId: anaAccount.id,
+          toAccountNumber: luisAccount.number,
+          amount: "2500",
+        })
+        .expect(404);
+    });
+
+    it("cerrada no admite ingresos", async () => {
+      const { token } = await register();
+      const accountId = await openAccount(token);
+      await close(token, accountId).expect(200);
+
+      await deposit(token, accountId, "2500").expect(409);
+    });
+
+    /** Cerrar no borra: el extracto es el histórico y se sigue leyendo entero. */
+    it("cerrada conserva su extracto y su saldo", async () => {
+      const ana = await register();
+      const anaAccount = await openAccountNumber(ana.token);
+      await deposit(ana.token, anaAccount.id, "5000").expect(201);
+
+      const luis = await register();
+      const luisAccount = await openAccountNumber(luis.token);
+
+      await request(server)
+        .post("/transfers")
+        .set("Authorization", `Bearer ${ana.token}`)
+        .send({
+          fromAccountId: anaAccount.id,
+          toAccountNumber: luisAccount.number,
+          amount: "5000",
+        })
+        .expect(201);
+
+      await close(ana.token, anaAccount.id).expect(200);
+
+      const statement = await request(server)
+        .get(`/accounts/${anaAccount.id}/statement`)
+        .set("Authorization", `Bearer ${ana.token}`)
+        .expect(200);
+
+      expect(statement.body.lines).toHaveLength(2);
+    });
+
+    it("se reabre, y vuelve a servir", async () => {
+      const { token } = await register();
+      const accountId = await openAccount(token);
+      await close(token, accountId).expect(200);
+
+      const response = await reopen(token, accountId).expect(200);
+
+      expect(response.body.closedAt).toBeNull();
+      await deposit(token, accountId, "2500").expect(201);
+    });
+
+    it("cerrar dos veces no mueve la fecha", async () => {
+      const { token } = await register();
+      const accountId = await openAccount(token);
+
+      const first = await close(token, accountId).expect(200);
+      const second = await close(token, accountId).expect(200);
+
+      expect(second.body.closedAt).toBe(first.body.closedAt);
+    });
+
+    it("cerrar la de otro es el mismo 404 que una que no existe", async () => {
+      const luis = await register();
+      const theirs = await openAccount(luis.token);
+      const ana = await register();
+
+      const ajena = await close(ana.token, theirs).expect(404);
+      const inventada = await close(ana.token, randomUUID()).expect(404);
+
+      expect(ajena.body).toEqual(inventada.body);
+
+      // Y sigue abierta, claro.
+      await deposit(luis.token, theirs, "100").expect(201);
+    });
+
+    it("la cerrada sigue en la lista, marcada", async () => {
+      const { token } = await register();
+      const accountId = await openAccount(token, "Vieja");
+      await close(token, accountId).expect(200);
+
+      const response = await request(server)
+        .get("/accounts")
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+
+      const listed = (response.body.accounts as { id: string; closedAt: string | null }[]).find(
+        (account) => account.id === accountId,
+      );
+
+      expect(listed?.closedAt).toEqual(expect.any(String));
+    });
+
+    /**
+     * Cerrar detiene lo que empiezas, no lo que vuelve.
+     *
+     * Una anulación corrige el pasado. Si cerrar la bloqueara, quien recibió un
+     * cobro por error podría cerrar su cuenta para no tener que devolverlo — y
+     * el dinero de otro se quedaría atrapado por decisión de quien lo cobró.
+     */
+    it("una anulación sí entra en una cuenta cerrada", async () => {
+      const ana = await register();
+      const anaAccount = await openAccountNumber(ana.token);
+      await deposit(ana.token, anaAccount.id, "5000").expect(201);
+
+      const luis = await register();
+      const luisAccount = await openAccountNumber(luis.token);
+
+      const sent = await request(server)
+        .post("/transfers")
+        .set("Authorization", `Bearer ${ana.token}`)
+        .send({
+          fromAccountId: anaAccount.id,
+          toAccountNumber: luisAccount.number,
+          amount: "5000",
+        })
+        .expect(201);
+
+      // Ana se queda a cero y cierra. Luis devuelve lo que le llegó.
+      await close(ana.token, anaAccount.id).expect(200);
+
+      await request(server)
+        .post(`/transactions/${sent.body.id as string}/reversal`)
+        .set("Authorization", `Bearer ${luis.token}`)
+        .expect(201);
+
+      const after = await request(server)
+        .get(`/accounts/${anaAccount.id}`)
+        .set("Authorization", `Bearer ${ana.token}`)
+        .expect(200);
+
+      expect(after.body.balance).toBe("5000");
+      expect(after.body.closedAt).toEqual(expect.any(String));
+    });
+  });
+
   describe("anular", () => {
     /** Deja a Luis con 2.500 que le mandó Ana, y devuelve el id del movimiento. */
     const transferBetween = async () => {

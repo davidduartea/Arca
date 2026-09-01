@@ -55,10 +55,12 @@ export class AccountLookupController {
   ): Promise<{ name: string }> {
     const holder = await this.accounts.holderByNumber(query.number);
 
-    // Mismo 404 para «el dígito no cuadra», «no existe» y «es del sistema»:
-    // quien pregunta no tiene por qué distinguirlos, y distinguirlos serviría
-    // para mapear qué números están emitidos.
-    if (!holder || holder.kind === "SYSTEM") {
+    // Mismo 404 para «el dígito no cuadra», «no existe», «es del sistema» y
+    // «está cerrada»: quien pregunta no tiene por qué distinguirlos, y
+    // distinguirlos serviría para mapear qué números están emitidos. Que una
+    // cuenta cerrada conteste igual que una inexistente es además lo correcto de
+    // cara a quien va a transferir — a ese número ya no llega el dinero.
+    if (!holder || holder.kind === "SYSTEM" || holder.closed) {
       throw new NotFoundException({
         error: "UnknownAccountError",
         message: "No encontramos ninguna arca con ese número",

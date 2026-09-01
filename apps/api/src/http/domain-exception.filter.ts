@@ -2,6 +2,7 @@ import { Catch, HttpException, HttpStatus, Logger } from "@nestjs/common";
 import type { ArgumentsHost, ExceptionFilter } from "@nestjs/common";
 import type { Response } from "express";
 
+import { AccountClosedError, AccountNotEmptyError } from "../accounts/accounts.errors";
 import {
   EmailAlreadyRegisteredError,
   InvalidCredentialsError,
@@ -78,6 +79,13 @@ const TRANSLATIONS: [new (...args: never[]) => Error, Translation][] = [
   [IdempotencyKeyReusedError, { status: HttpStatus.CONFLICT, visible: true }],
   [AlreadyReversedError, { status: HttpStatus.CONFLICT, visible: true }],
   [EmailAlreadyRegisteredError, { status: HttpStatus.CONFLICT, visible: true }],
+
+  // Los dos son sobre una cuenta propia, así que el mensaje sale entero: quien
+  // pregunta ya ha demostrado que es suya y no se le revela nada. El de
+  // «todavía tiene dinero» lleva además el importe, que es justo lo que hace
+  // falta para saber cuánto sacar antes de volver a intentarlo.
+  [AccountNotEmptyError, { status: HttpStatus.CONFLICT, visible: true }],
+  [AccountClosedError, { status: HttpStatus.CONFLICT, visible: true }],
 
   // ─── 400 ────────────────────────────────────────────────────────────────
   [UnbalancedTransactionError, { status: HttpStatus.BAD_REQUEST, visible: true }],

@@ -22,6 +22,16 @@ export interface Account {
   number: string;
 
   kind: AccountKind;
+
+  /**
+   * Cuándo se cerró, si se cerró.
+   *
+   * Cerrar no borra: los asientos son inmutables y el extracto se sigue
+   * leyendo. Lo que hace es sacarla de circulación — no se puede transferir
+   * desde ella ni recibir en ella— y se puede deshacer.
+   */
+  closedAt: Date | null;
+
   createdAt: Date;
 }
 
@@ -37,4 +47,5 @@ export interface AccountHolder {
   name: string;
 
   kind: AccountKind;
+  closed: boolean;
 }
