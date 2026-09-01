@@ -27,6 +27,16 @@ model User {
   /// persona, y sin normalizar el índice único dejaría registrarse dos veces.
   email String @unique
 
+  /// Cómo se llama, tal y como lo escribió.
+  ///
+  /// Es lo que ve un desconocido al teclear su número de arca antes de mandarle
+  /// dinero, y por eso existe: antes se enseñaba el nombre de la cuenta, que es
+  /// una etiqueta privada y además no confirma a quién se le manda.
+  ///
+  /// Sin normalizar y sin índice: dos personas pueden llamarse igual. Quien
+  /// distingue es el número.
+  name String
+
   /// El resultado de scrypt con su sal y sus parámetros dentro. Nunca la
   /// contraseña, ni algo de lo que se pueda sacar.
   passwordHash String @map("password_hash")

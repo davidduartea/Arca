@@ -24,3 +24,17 @@ export interface Account {
   kind: AccountKind;
   createdAt: Date;
 }
+
+/**
+ * Lo que se contesta sobre un número de arca ajeno.
+ *
+ * Deliberadamente **no** es una `Account`: quien pregunta no es el dueño, y lo
+ * único que le corresponde saber es a quién pertenece. Ni el identificador
+ * interno, ni el nombre de la cuenta, ni su saldo.
+ */
+export interface AccountHolder {
+  /** El nombre de la persona, no el de la cuenta. */
+  name: string;
+
+  kind: AccountKind;
+}

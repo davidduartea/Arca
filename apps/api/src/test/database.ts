@@ -95,7 +95,11 @@ export async function truncateAll(prisma: PrismaService): Promise<void> {
  */
 export async function createOwner(prisma: PrismaService): Promise<string> {
   const user = await prisma.user.create({
-    data: { email: `${randomUUID()}@arca.test`, passwordHash: "sin-acceso" },
+    data: {
+      email: `${randomUUID()}@arca.test`,
+      name: "Dueña de pruebas",
+      passwordHash: "sin-acceso",
+    },
     select: { id: true },
   });
 

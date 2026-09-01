@@ -10,6 +10,7 @@ import { WORLD_ACCOUNT_ID } from "../shared/system-account";
 import { createTestingApp, truncateAll } from "../test/database";
 
 const PASSWORD = "una-contraseña-larga";
+const NAME = "Ana Duarte";
 
 /**
  * La API por HTTP de verdad, con guardias y filtro de errores puestos.
@@ -37,14 +38,15 @@ describe("API HTTP", () => {
     await truncateAll(prisma);
   });
 
-  const register = async (email = `${randomUUID()}@arca.test`) => {
+  const register = async (email = `${randomUUID()}@arca.test`, name = NAME) => {
     const response = await request(server)
       .post("/auth/register")
-      .send({ email, password: PASSWORD })
+      .send({ name, email, password: PASSWORD })
       .expect(201);
 
     return {
       email,
+      name,
       token: response.body.token as string,
       userId: response.body.user.id as string,
     };
@@ -87,7 +89,7 @@ describe("API HTTP", () => {
     it("registrarse devuelve el usuario y un token", async () => {
       const response = await request(server)
         .post("/auth/register")
-        .send({ email: "ana@arca.test", password: PASSWORD })
+        .send({ name: NAME, email: "ana@arca.test", password: PASSWORD })
         .expect(201);
 
       expect(response.body.user.email).toBe("ana@arca.test");
@@ -98,7 +100,7 @@ describe("API HTTP", () => {
     it("nunca devuelve el hash de la contraseña", async () => {
       const response = await request(server)
         .post("/auth/register")
-        .send({ email: "ana@arca.test", password: PASSWORD })
+        .send({ name: NAME, email: "ana@arca.test", password: PASSWORD })
         .expect(201);
 
       expect(JSON.stringify(response.body)).not.toContain("scrypt");
@@ -108,7 +110,7 @@ describe("API HTTP", () => {
     it("normaliza el correo a minúsculas", async () => {
       await request(server)
         .post("/auth/register")
-        .send({ email: "  Ana@Arca.Test  ", password: PASSWORD })
+        .send({ name: NAME, email: "  Ana@Arca.Test  ", password: PASSWORD })
         .expect(201);
 
       // Y por tanto se puede entrar escribiéndolo de cualquier forma.
@@ -123,19 +125,19 @@ describe("API HTTP", () => {
 
       await request(server)
         .post("/auth/register")
-        .send({ email: "ana@arca.test", password: PASSWORD })
+        .send({ name: NAME, email: "ana@arca.test", password: PASSWORD })
         .expect(409);
     });
 
     it("exige una contraseña larga y un correo con forma de correo", async () => {
       await request(server)
         .post("/auth/register")
-        .send({ email: "ana@arca.test", password: "corta" })
+        .send({ name: NAME, email: "ana@arca.test", password: "corta" })
         .expect(400);
 
       await request(server)
         .post("/auth/register")
-        .send({ email: "no-es-un-correo", password: PASSWORD })
+        .send({ name: NAME, email: "no-es-un-correo", password: PASSWORD })
         .expect(400);
     });
 
@@ -154,6 +156,72 @@ describe("API HTTP", () => {
 
       // Distinguirlos diría a quien prueba qué correos están registrados.
       expect(wrongPassword.body.message).toBe(unknownEmail.body.message);
+    });
+
+    it("el nombre hace falta y no puede ser sólo espacios", async () => {
+      await request(server)
+        .post("/auth/register")
+        .send({ email: "ana@arca.test", password: PASSWORD })
+        .expect(400);
+
+      await request(server)
+        .post("/auth/register")
+        .send({ name: "   ", email: "ana@arca.test", password: PASSWORD })
+        .expect(400);
+    });
+
+    it("el nombre viaja con la sesión, recortado", async () => {
+      const response = await request(server)
+        .post("/auth/register")
+        .send({ name: "  Ana Duarte  ", email: "ana@arca.test", password: PASSWORD })
+        .expect(201);
+
+      expect(response.body.user.name).toBe("Ana Duarte");
+
+      // Y también al volver a entrar, y al preguntar quién eres.
+      const session = await request(server)
+        .post("/auth/login")
+        .send({ email: "ana@arca.test", password: PASSWORD })
+        .expect(200);
+
+      expect(session.body.user.name).toBe("Ana Duarte");
+
+      const me = await request(server)
+        .get("/auth/me")
+        .set("Authorization", `Bearer ${session.body.token as string}`)
+        .expect(200);
+
+      expect(me.body.user.name).toBe("Ana Duarte");
+    });
+
+    it("se puede cambiar el nombre sin volver a entrar", async () => {
+      const { token } = await register("ana@arca.test");
+
+      const changed = await request(server)
+        .patch("/auth/name")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ name: "Ana Duarte Pérez" })
+        .expect(200);
+
+      expect(changed.body.user.name).toBe("Ana Duarte Pérez");
+
+      // El mismo token de antes: cambiar el nombre no cierra ninguna sesión.
+      const me = await request(server)
+        .get("/auth/me")
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+
+      expect(me.body.user.name).toBe("Ana Duarte Pérez");
+    });
+
+    it("un nombre en blanco no se acepta al cambiarlo", async () => {
+      const { token } = await register();
+
+      await request(server)
+        .patch("/auth/name")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ name: "  " })
+        .expect(400);
     });
   });
 
@@ -615,9 +683,17 @@ describe("API HTTP", () => {
       expect(first.number).not.toBe(second.number);
     });
 
+    /**
+     * Lo que se confirma antes de mandar dinero es **a quién** se manda.
+     *
+     * Antes se devolvía el nombre de la cuenta, y eran dos errores en uno:
+     * cualquiera con doce cifras leía la etiqueta privada que su dueño le puso,
+     * y encima no confirmaba nada útil — cómo llamó alguien a su cajón no dice
+     * quién es.
+     */
     it("se puede consultar a quién pertenece, para confirmar antes de mandar", async () => {
-      const luis = await register();
-      const account = await openAccountNumber(luis.token, "Cuenta de Luis");
+      const luis = await register(`${randomUUID()}@arca.test`, "Luis Ferrer");
+      const account = await openAccountNumber(luis.token, "Ahorro para el divorcio");
       const ana = await register();
 
       // Lo consulta Ana, que no es la dueña: para eso está un número de arca.
@@ -626,12 +702,12 @@ describe("API HTTP", () => {
         .set("Authorization", `Bearer ${ana.token}`)
         .expect(200);
 
-      expect(response.body.name).toBe("Cuenta de Luis");
+      expect(response.body.name).toBe("Luis Ferrer");
     });
 
-    it("la consulta no filtra nada más que el nombre", async () => {
-      const luis = await register();
-      const account = await openAccountNumber(luis.token);
+    it("la consulta no filtra el nombre de la cuenta, ni ninguna otra cosa", async () => {
+      const luis = await register(`${randomUUID()}@arca.test`, "Luis Ferrer");
+      const account = await openAccountNumber(luis.token, "Ahorro para el divorcio");
       const ana = await register();
 
       const response = await request(server)
@@ -641,6 +717,26 @@ describe("API HTTP", () => {
 
       // Ni el saldo, ni el correo del dueño, ni el identificador interno.
       expect(Object.keys(response.body)).toEqual(["name"]);
+      expect(JSON.stringify(response.body)).not.toContain("divorcio");
+    });
+
+    it("el nombre que se enseña es el de ahora, no el del registro", async () => {
+      const luis = await register(`${randomUUID()}@arca.test`, "Luis");
+      const account = await openAccountNumber(luis.token);
+      const ana = await register();
+
+      await request(server)
+        .patch("/auth/name")
+        .set("Authorization", `Bearer ${luis.token}`)
+        .send({ name: "Luis Ferrer" })
+        .expect(200);
+
+      const response = await request(server)
+        .get(`/accounts/lookup?number=${account.number}`)
+        .set("Authorization", `Bearer ${ana.token}`)
+        .expect(200);
+
+      expect(response.body.name).toBe("Luis Ferrer");
     });
 
     it("acepta el número escrito de cualquier forma", async () => {

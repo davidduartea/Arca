@@ -6,7 +6,7 @@ import { generateAccountNumber, parseAccountNumber } from "../shared/account-num
 import { UnknownAccountError } from "../ledger/ledger.errors";
 import { PrismaService } from "../prisma/prisma.service";
 import { isUuid } from "../shared/uuid";
-import type { Account, AccountDraft } from "./accounts.types";
+import type { Account, AccountDraft, AccountHolder } from "./accounts.types";
 
 /** Cuántas veces se sortea un número antes de rendirse. */
 const NUMBER_ATTEMPTS = 8;
@@ -89,6 +89,40 @@ export class AccountsService {
 
     const row = await this.prisma.account.findUnique({ where: { number } });
     return row ? toAccount(row) : null;
+  }
+
+  /**
+   * A quién pertenece un número de arca: el nombre de la persona y nada más.
+   *
+   * Es lo que se enseña a quien va a transferir, antes de confirmar. Antes se
+   * devolvía el nombre de la **cuenta**, y eran dos errores en uno: filtraba a
+   * cualquiera con doce cifras la etiqueta privada que su dueño le puso, y
+   * encima no confirmaba lo que hay que confirmar — quien manda dinero quiere
+   * saber a quién, no cómo llamó esa persona a su cajón.
+   *
+   * Va en una sola consulta con `include` en lugar de leer la cuenta y después
+   * a su dueño: son dos viajes para una pantalla que se pinta mientras alguien
+   * teclea.
+   */
+  async holderByNumber(typed: string): Promise<AccountHolder | null> {
+    let number: string;
+
+    try {
+      number = parseAccountNumber(typed);
+    } catch {
+      return null;
+    }
+
+    const row = await this.prisma.account.findUnique({
+      where: { number },
+      select: { kind: true, owner: { select: { name: true } } },
+    });
+    if (!row) return null;
+
+    return {
+      name: row.owner.name,
+      kind: row.kind === "SYSTEM" ? "SYSTEM" : "USER",
+    };
   }
 
   /**
