@@ -73,6 +73,8 @@ porque se le cayó la red, no se cobra dos veces.
 **Fase 4 · API HTTP** — hecho
 **Fase 5 · auditoría del libro** — hecho
 **Fase 6 · la cara** — hecho
+**Fase 7 · seguridad y sesiones** — hecho
+**Fase 8 · despliegue** — hecho
 
 422 tests: 254 de la API y 168 del frontal. Los de integración van contra
 Postgres de verdad y no contra dobles. No es purismo: buena parte de lo que hay
