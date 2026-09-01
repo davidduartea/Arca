@@ -9,6 +9,7 @@ import { AccountsModule } from "../accounts/accounts.module";
 import { AppModule } from "../app.module";
 import { AuditModule } from "../audit/audit.module";
 import { JWT_SECRET } from "../auth/token.service";
+import { securityHeaders } from "../http/security-headers";
 import { LedgerModule } from "../ledger/ledger.module";
 import { DATABASE_URL, PrismaService } from "../prisma/prisma.service";
 import { SYSTEM_USER_ID, WORLD_ACCOUNT_ID } from "../shared/system-account";
@@ -61,6 +62,11 @@ export async function createTestingApp({ throttle = false } = {}): Promise<INest
   if (!throttle) builder.overrideProvider(ThrottlerGuard).useValue(NO_LIMIT);
 
   const app = (await builder.compile()).createNestApplication();
+
+  // La misma línea que `main.ts`, y por eso está aquí: unas cabeceras que sólo
+  // existen en producción no las prueba nadie, y se caen sin que se note.
+  app.use(securityHeaders);
+
   await app.init();
 
   return app;

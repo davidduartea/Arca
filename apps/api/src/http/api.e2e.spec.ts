@@ -833,6 +833,25 @@ describe("API HTTP", () => {
     });
   });
 
+  describe("cabeceras de seguridad", () => {
+    it("van en todas las respuestas, incluidas las que fallan", async () => {
+      const { token } = await register();
+
+      for (const response of [
+        await request(server).get("/accounts").set("Authorization", `Bearer ${token}`),
+        await request(server).get("/accounts"),
+      ]) {
+        expect(response.headers["x-content-type-options"]).toBe("nosniff");
+        expect(response.headers["referrer-policy"]).toBe("no-referrer");
+        expect(response.headers["x-frame-options"]).toBe("DENY");
+        expect(response.headers["strict-transport-security"]).toContain("max-age=63072000");
+
+        // La más estricta que hay: una API que devuelve JSON no carga nada.
+        expect(response.headers["content-security-policy"]).toContain("default-src 'none'");
+      }
+    });
+  });
+
   describe("renombrar y cerrar cuentas", () => {
     const rename = (token: string, accountId: string, name: string) =>
       request(server)
