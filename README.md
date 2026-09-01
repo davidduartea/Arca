@@ -74,7 +74,7 @@ porque se le cayó la red, no se cobra dos veces.
 **Fase 5 · auditoría del libro** — hecho
 **Fase 6 · la cara** — hecho
 
-239 tests: 180 de la API y 59 del frontal. Los de integración van contra
+422 tests: 254 de la API y 168 del frontal. Los de integración van contra
 Postgres de verdad y no contra dobles. No es purismo: buena parte de lo que hay
 que probar **es** la base, y un doble no tiene triggers. Un test que pasara con
 un doble no diría nada sobre si el libro cuadra.
@@ -86,18 +86,25 @@ bloqueada. `StatementsService` sólo lee. Y por encima, una API que traduce todo
 eso a HTTP sin que ninguno de ellos sepa que HTTP existe. Y al margen de todo,
 un comando que audita el libro entero y no se fía de nada de lo anterior.
 
-| Método | Ruta                        | Qué                        |
-| ------ | --------------------------- | -------------------------- |
-| POST   | `/auth/register` · `/login` | abiertas                   |
-| GET    | `/auth/me`                  | quién soy                  |
-| GET    | `/accounts`                 | mis cuentas con saldo      |
-| POST   | `/accounts`                 | abrir una                  |
-| GET    | `/accounts/:id`             | una, con saldo             |
-| GET    | `/accounts/lookup?number=`  | de quién es un número      |
-| GET    | `/accounts/:id/statement`   | extracto paginado          |
-| GET    | `/accounts/:id/balance?at=` | saldo a una fecha          |
-| POST   | `/transfers`                | mover dinero               |
-| POST   | `/deposits`                 | simular un ingreso externo |
+| Método | Ruta                            | Qué                         |
+| ------ | ------------------------------- | --------------------------- |
+| POST   | `/auth/register` · `/login`     | abiertas                    |
+| GET    | `/auth/me`                      | quién soy                   |
+| PATCH  | `/auth/name` · `/auth/password` | cambiar lo mío              |
+| POST   | `/auth/logout-all`              | echar a todas mis sesiones  |
+| GET    | `/accounts`                     | mis cuentas con saldo       |
+| POST   | `/accounts`                     | abrir una                   |
+| GET    | `/accounts/:id`                 | una, con saldo              |
+| PATCH  | `/accounts/:id`                 | renombrarla                 |
+| POST   | `/accounts/:id/closure`         | cerrarla — exige saldo cero |
+| DELETE | `/accounts/:id/closure`         | reabrirla                   |
+| GET    | `/accounts/lookup?number=`      | de quién es un número       |
+| GET    | `/accounts/:id/statement`       | extracto paginado           |
+| GET    | `/accounts/:id/balance?at=`     | saldo a una fecha           |
+| POST   | `/transfers`                    | mover dinero                |
+| POST   | `/deposits`                     | simular un ingreso externo  |
+| POST   | `/transactions/:id/reversal`    | devolver — sólo quien cobró |
+| GET    | `/healthz` · `/readyz`          | salud: proceso · y base     |
 
 El frontal es Next.js y **ni una petición sale del navegador hacia la API**:
 todo pasa por acciones de servidor. El token vive en una cookie que el
@@ -214,6 +221,36 @@ pasado. Que eso sea un 400 se decide en `http/domain-exception.filter.ts`, y el
 mismo motor sirve igual para un cron, donde un código de estado no significaría
 nada.
 
+### Dos conexiones, porque son dos autoridades
+
+La aplicación entra a Postgres con **dos usuarios distintos**, y ninguno de los
+dos es dueño de las tablas.
+
+`arca_reader` sirve extractos, saldos y la lista de cuentas. Tiene `SELECT` y
+nada más, y unas políticas por fila que comparan con el identificador que la
+petición anuncia. Una consulta a la que se le olvide filtrar por dueño **no
+devuelve el libro entero**: devuelve lo de quien pregunta. Y una que se olvide de
+decir quién pregunta no devuelve nada, porque la comparación es contra nulo.
+
+`arca_ledger` mueve el dinero. Ve el libro entero, y hace falta que lo vea: una
+transferencia bloquea la cuenta del destinatario y le escribe un asiento, y esa
+cuenta es de otro. Lo que no puede es **reescribir ni borrar un asiento**, ni
+vaciar una tabla, ni tocar los triggers — no tiene el privilegio y no es dueño de
+nada. Ni una inyección de SQL con esa conexión cambiaría un importe ya escrito.
+
+Que sean dos y no uno con RLS es el resultado de comprobarlo, no una preferencia.
+Una política por dueño sobre el camino del dinero no protege: **rompe callando**.
+El `SELECT ... FOR UPDATE` sobre las dos cuentas de una transferencia devuelve
+una sola fila y no da error, así que el bloqueo sobre la cuenta ajena desaparece
+sin que nadie se entere; y la comprobación de fondos de una anulación lee cero
+donde hay 9.500. En un libro contable, un fallo silencioso en el camino del
+dinero es peor que no tener la protección.
+
+Los tests que sujetan todo esto están en `src/prisma/roles.spec.ts`, y están
+escritos al revés que los demás: las consultas van **mal a propósito** —sin el
+filtro, tocando lo que no toca— y lo que se comprueba es que la base no siga a
+la aplicación cuando la aplicación se equivoca.
+
 ### Una auditoría que no se fía de nada
 
 Los triggers garantizan que **cada transacción** cuadra. `pnpm ledger:audit`
@@ -264,6 +301,7 @@ de cero, hay que mirar. Un aviso no rompe el comando; sólo lo crítico.
 pnpm install
 pnpm db:up          # Postgres en el 5433
 pnpm db:migrate
+pnpm db:roles       # los dos usuarios con los que corre la aplicación
 pnpm test           # crea la base de pruebas y la migra por su cuenta
 pnpm ledger:audit   # ¿cuadra el libro entero?
 pnpm dev            # la API en el 3000
@@ -276,6 +314,29 @@ máquina.
 Los tests usan una base aparte, `arca_test`, y la vacían entre casos. El
 arranque de Vitest la crea si no existe y se niega a arrancar si alguien apunta
 `TEST_DATABASE_URL` a la de desarrollo.
+
+---
+
+## Despliegue
+
+Tres servicios y ningún euro: la web en **Vercel**, la API en **Render** desde
+`apps/api/Dockerfile`, y Postgres en **Supabase**.
+
+```bash
+docker build -f apps/api/Dockerfile .   # el contexto es la raíz, no apps/api
+```
+
+La imagen aplica sus propias migraciones antes de escuchar. Si una falla, el
+contenedor no arranca — es deliberado: una API hablando con un esquema que no le
+corresponde falla de formas mucho más difíciles de diagnosticar.
+
+Dos cadenas de conexión y no una, que es la trampa que más cuesta ver: la
+aplicación va por el pooler en modo transacción y las migraciones por el de
+sesión, porque el primero no admite `CREATE TABLE`. Con una sola URL el servicio
+arranca, consulta bien, y muere el día que hay una migración pendiente.
+
+El paso completo, con lo que cuesta averiguar de cada proveedor, en
+[`docs/despliegue.md`](./docs/despliegue.md).
 
 ---
 
