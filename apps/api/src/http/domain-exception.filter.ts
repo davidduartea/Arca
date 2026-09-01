@@ -1,8 +1,10 @@
 import { Catch, HttpException, HttpStatus, Logger } from "@nestjs/common";
 import type { ArgumentsHost, ExceptionFilter } from "@nestjs/common";
+import { ThrottlerException } from "@nestjs/throttler";
 import type { Response } from "express";
 
 import { AccountClosedError, AccountNotEmptyError } from "../accounts/accounts.errors";
+import { RATE_LIMIT_MESSAGE } from "./rate-limit";
 import {
   EmailAlreadyRegisteredError,
   InvalidCredentialsError,
@@ -137,6 +139,25 @@ export class DomainExceptionFilter implements ExceptionFilter {
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const response = host.switchToHttp().getResponse<Response>();
+
+    /*
+      El tope de peticiones, con la forma que tiene todo lo demás.
+
+      Sin este caso saldría el cuerpo que arma la librería, que para un mensaje
+      de texto es la cadena a secas — `"ThrottlerException: Too Many Requests"`
+      antes de traducirla — y no un objeto con `error` y `message`. El cliente
+      tendría que reconocer un formato distinto sólo para este código.
+
+      La cabecera `Retry-After` no se toca: la pone el propio limitador, que es
+      el único que sabe cuánto queda de castigo, y sobrevive a esta respuesta
+      porque se escribió sobre el mismo objeto.
+    */
+    if (exception instanceof ThrottlerException) {
+      response
+        .status(HttpStatus.TOO_MANY_REQUESTS)
+        .json({ error: "TooManyRequestsError", message: RATE_LIMIT_MESSAGE });
+      return;
+    }
 
     // Lo que Nest ya sabe contestar — validación, 401 del guardia, 404 de ruta.
     if (exception instanceof HttpException) {

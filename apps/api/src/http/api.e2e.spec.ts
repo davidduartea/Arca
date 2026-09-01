@@ -3,7 +3,7 @@ import type { Server } from "node:http";
 
 import type { INestApplication } from "@nestjs/common";
 import request from "supertest";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { PrismaService } from "../prisma/prisma.service";
 import { WORLD_ACCOUNT_ID } from "../shared/system-account";
@@ -1318,15 +1318,38 @@ describe("limitación de intentos", () => {
   let app: INestApplication;
   let server: Server;
 
-  beforeAll(async () => {
+  /**
+   * Una aplicación por test, y no una para todos.
+   *
+   * El contador vive en memoria y dura un minuto, así que un test que agota un
+   * cupo se lo deja agotado al siguiente: el segundo empezaría bloqueado y
+   * fallaría por un motivo que no es el suyo. Levantarla de nuevo es lo que
+   * pone el contador a cero.
+   */
+  beforeEach(async () => {
     app = await createTestingApp({ throttle: true });
     await truncateAll(app.get(PrismaService));
     server = app.getHttpServer() as Server;
   });
 
-  afterAll(async () => {
+  afterEach(async () => {
     await app.close();
   });
+
+  const enter = async (email: string) => {
+    const response = await request(server)
+      .post("/auth/register")
+      .send({ name: NAME, email, password: PASSWORD })
+      .expect(201);
+
+    return response.body.token as string;
+  };
+
+  const wrongPassword = (token: string) =>
+    request(server)
+      .patch("/auth/password")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ currentPassword: "no-es-esta-contraseña", newPassword: "otra-bastante-larga" });
 
   it("corta los intentos de inicio de sesión a ciegas", async () => {
     const credentials = { email: "nadie@arca.test", password: PASSWORD };
@@ -1336,6 +1359,67 @@ describe("limitación de intentos", () => {
       await request(server).post("/auth/login").send(credentials).expect(401);
     }
 
-    await request(server).post("/auth/login").send(credentials).expect(429);
+    const blocked = await request(server).post("/auth/login").send(credentials).expect(429);
+
+    // Con la forma de siempre y en castellano, no la cadena que arma la
+    // librería con el nombre de su propia clase dentro.
+    expect(blocked.body.error).toBe("TooManyRequestsError");
+    expect(blocked.body.message).not.toContain("Throttler");
+
+    // Y diciendo cuánto hay que esperar, que es lo que convierte un «no» en
+    // algo con lo que un cliente puede hacer algo.
+    expect(Number(blocked.headers["retry-after"])).toBeGreaterThan(0);
+  });
+
+  /**
+   * El cupo es de cada persona, no de cada dirección.
+   *
+   * Contar por IP castiga a quien no ha hecho nada: detrás de un NAT —una
+   * oficina, un operador móvil— cientos comparten dirección, así que basta con
+   * que una agote el cupo para dejar fuera a las demás. Las dos peticiones de
+   * este test salen de la misma IP y llevan sesiones distintas.
+   */
+  it("el cupo lo gasta cada persona por su cuenta", async () => {
+    const ana = await enter("ana-limite@arca.test");
+    const luis = await enter("luis-limite@arca.test");
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await wrongPassword(ana).expect(403);
+    }
+
+    await wrongPassword(ana).expect(429);
+
+    // Luis no ha gastado nada suyo, aunque venga de la misma dirección.
+    await wrongPassword(luis).expect(403);
+  });
+
+  /**
+   * Y un token inventado no estrena cupo.
+   *
+   * Si el identificador se leyera del token sin comprobar la firma, bastaría
+   * con escribir un `sub` distinto en cada intento para no agotar nunca nada, y
+   * el limitador entero sobraría. Verificado, un token falso no identifica a
+   * nadie y se cae al cubo de la IP.
+   */
+  it("un token falsificado no da cupo nuevo", async () => {
+    const credentials = { email: "tampoco@arca.test", password: PASSWORD };
+    const forged = (sub: string) =>
+      `${Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url")}.${Buffer.from(
+        JSON.stringify({ sub, ver: 0, exp: Math.floor(Date.now() / 1000) + 3600 }),
+      ).toString("base64url")}.firma-inventada`;
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await request(server)
+        .post("/auth/login")
+        .set("Authorization", `Bearer ${forged(randomUUID())}`)
+        .send(credentials)
+        .expect(401);
+    }
+
+    await request(server)
+      .post("/auth/login")
+      .set("Authorization", `Bearer ${forged(randomUUID())}`)
+      .send(credentials)
+      .expect(429);
   });
 });
