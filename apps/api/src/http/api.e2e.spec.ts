@@ -704,6 +704,163 @@ describe("API HTTP", () => {
     });
   });
 
+  describe("anular", () => {
+    /** Deja a Luis con 2.500 que le mandó Ana, y devuelve el id del movimiento. */
+    const transferBetween = async () => {
+      const ana = await register();
+      const luis = await register();
+      const anaAccount = await openAccountNumber(ana.token);
+      const luisAccount = await openAccountNumber(luis.token);
+      await deposit(ana.token, anaAccount.id, "10000").expect(201);
+
+      const response = await request(server)
+        .post("/transfers")
+        .set("Authorization", `Bearer ${ana.token}`)
+        .send({
+          fromAccountId: anaAccount.id,
+          toAccountNumber: luisAccount.number,
+          amount: "2500",
+        })
+        .expect(201);
+
+      return { ana, luis, anaAccount, luisAccount, transactionId: response.body.id as string };
+    };
+
+    const reverse = (token: string, transactionId: string) =>
+      request(server)
+        .post(`/transactions/${transactionId}/reversal`)
+        .set("Authorization", `Bearer ${token}`);
+
+    const balanceOf = async (token: string, accountId: string) => {
+      const response = await request(server)
+        .get(`/accounts/${accountId}/balance`)
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+
+      return response.body.balance as string;
+    };
+
+    it("quien recibió devuelve el dinero, y los dos saldos vuelven a su sitio", async () => {
+      const { ana, luis, anaAccount, luisAccount, transactionId } = await transferBetween();
+
+      const response = await reverse(luis.token, transactionId).expect(201);
+
+      expect(response.body.reversesId).toBe(transactionId);
+      expect(await balanceOf(ana.token, anaAccount.id)).toBe("10000");
+      expect(await balanceOf(luis.token, luisAccount.id)).toBe("0");
+    });
+
+    /**
+     * El control de seguridad de esta ruta.
+     *
+     * Si quien envía pudiera anular, el libro serviría para robar: pagas, te
+     * llevas la mercancía y te vuelves a llevar el dinero.
+     */
+    it("quien envió no puede recuperarlo, y no se entera de que existe", async () => {
+      const { ana, luis, anaAccount, luisAccount, transactionId } = await transferBetween();
+
+      const response = await reverse(ana.token, transactionId).expect(404);
+
+      // El mismo cuerpo que si no existiera: no confirma que haya nada ahí.
+      expect(JSON.stringify(response.body)).not.toContain("NotYourTransaction");
+      expect(await balanceOf(ana.token, anaAccount.id)).toBe("7500");
+      expect(await balanceOf(luis.token, luisAccount.id)).toBe("2500");
+    });
+
+    it("un desconocido tampoco, aunque acierte el identificador", async () => {
+      const { luis, luisAccount, transactionId } = await transferBetween();
+      const nadie = await register();
+
+      await reverse(nadie.token, transactionId).expect(404);
+
+      expect(await balanceOf(luis.token, luisAccount.id)).toBe("2500");
+    });
+
+    /**
+     * Anular es sacar dinero, así que pasa por la misma guarda que una
+     * transferencia. Sin ella, devolver lo ya gastado dejaría a Luis en
+     * descubierto y rompería la única regla que el libro promete.
+     */
+    it("no se puede devolver lo que ya se gastó", async () => {
+      const { luis, luisAccount, transactionId } = await transferBetween();
+      const otra = await openAccountNumber(luis.token, "Ahorro");
+
+      await request(server)
+        .post("/transfers")
+        .set("Authorization", `Bearer ${luis.token}`)
+        .send({
+          fromAccountId: luisAccount.id,
+          toAccountNumber: otra.number,
+          amount: "2500",
+        })
+        .expect(201);
+
+      await reverse(luis.token, transactionId).expect(409);
+
+      expect(await balanceOf(luis.token, luisAccount.id)).toBe("0");
+    });
+
+    it("dos veces no: la segunda es un conflicto y no mueve nada", async () => {
+      const { luis, luisAccount, transactionId } = await transferBetween();
+
+      await reverse(luis.token, transactionId).expect(201);
+      await reverse(luis.token, transactionId).expect(409);
+
+      expect(await balanceOf(luis.token, luisAccount.id)).toBe("0");
+    });
+
+    it("un ingreso lo anula su dueño, que es quien lo recibió", async () => {
+      const { token } = await register();
+      const account = await openAccount(token);
+      const response = await deposit(token, account, "5000").expect(201);
+
+      await reverse(token, response.body.id as string).expect(201);
+
+      expect(await balanceOf(token, account)).toBe("0");
+    });
+
+    /** Igual que con las cuentas: los dos 404 tienen que ser el mismo 404. */
+    it("un movimiento que no existe responde igual que uno que no es tuyo", async () => {
+      const { ana, transactionId } = await transferBetween();
+
+      const ajeno = await reverse(ana.token, transactionId).expect(404);
+      const inventado = await reverse(ana.token, randomUUID()).expect(404);
+
+      expect(ajeno.body).toEqual(inventado.body);
+      expect(JSON.stringify(ajeno.body)).not.toContain("NotYour");
+    });
+
+    it("un identificador que no es un uuid es un 400", async () => {
+      const { token } = await register();
+
+      await reverse(token, "no-soy-un-uuid").expect(400);
+    });
+
+    it("sin token no se anula nada", async () => {
+      const { luis, luisAccount, transactionId } = await transferBetween();
+
+      await request(server).post(`/transactions/${transactionId}/reversal`).expect(401);
+
+      expect(await balanceOf(luis.token, luisAccount.id)).toBe("2500");
+    });
+
+    it("la anulación aparece en el extracto marcada como tal", async () => {
+      const { luis, luisAccount, transactionId } = await transferBetween();
+      await reverse(luis.token, transactionId).expect(201);
+
+      const response = await request(server)
+        .get(`/accounts/${luisAccount.id}/statement`)
+        .set("Authorization", `Bearer ${luis.token}`)
+        .expect(200);
+
+      const lines = response.body.lines as { amount: string; isReversal: boolean }[];
+
+      expect(lines).toHaveLength(2);
+      expect(lines[0]).toMatchObject({ amount: "-2500", isReversal: true });
+      expect(lines[1]).toMatchObject({ amount: "2500", isReversal: false });
+    });
+  });
+
   describe("extracto", () => {
     it("devuelve las líneas con su saldo corriente", async () => {
       const { token } = await register();

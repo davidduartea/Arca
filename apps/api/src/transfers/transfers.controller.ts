@@ -4,8 +4,10 @@ import {
   HttpCode,
   HttpStatus,
   NotFoundException,
+  Param,
   Post,
 } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { z } from "zod";
 
 import { AccountsService } from "../accounts/accounts.service";
@@ -35,6 +37,17 @@ const amountInCents = z
   .transform(BigInt);
 
 const accountIdSchema = z.string().uuid("no es un identificador de cuenta");
+
+/**
+ * Falso positivo conocido: `no-useless-assignment` no ve los usos que hay
+ * dentro de un decorador de parámetro, y ésta se usa más abajo en `@Param`.
+ * Es el mismo caso que en el controlador de la consulta de números.
+ */
+// eslint-disable-next-line no-useless-assignment
+const transactionIdSchema = z.string().uuid("no es un identificador de movimiento");
+
+/** Ver el comentario de la ruta: veinte al minuto, como la consulta de números. */
+const REVERSAL_LIMIT = { default: { limit: 20, ttl: 60_000 } };
 
 /**
  * El destino se teclea, asi que llega como numero de arca y no como uuid.
@@ -126,5 +139,28 @@ export class TransfersController {
         description: body.description ?? "Ingreso",
       }),
     );
+  }
+
+  /**
+   * Devuelve un movimiento que entró en una cuenta tuya.
+   *
+   * El identificador va en la ruta y no en el cuerpo porque es el recurso sobre
+   * el que se actúa, no un dato del formulario. Y no lleva cuerpo: no hay nada
+   * que elegir — el importe, las cuentas y el concepto salen todos del original.
+   *
+   * El límite es el estricto y no el general. Anular exige conocer el
+   * identificador de una transacción, así que probar a ciegas es caro; pero
+   * probar a ciegas es justo lo que haría quien quisiera descubrir cuáles
+   * existen, porque la respuesta cuando no es tuya es un 404 igual que cuando no
+   * existe. Veinte al minuto sobran para el uso legítimo.
+   */
+  @Post("transactions/:transactionId/reversal")
+  @Throttle(REVERSAL_LIMIT)
+  @HttpCode(HttpStatus.CREATED)
+  async reverse(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("transactionId", new ZodValidationPipe(transactionIdSchema)) transactionId: string,
+  ): Promise<TransactionView> {
+    return transactionView(await this.transfers.reverse({ transactionId, ownerId: user.id }));
   }
 }

@@ -15,6 +15,14 @@ export interface StatementLine {
   /** Si el movimiento corrige a otro anterior. */
   isReversal: boolean;
 
+  /**
+   * Si a este movimiento ya lo anularon.
+   *
+   * Sin este dato la pantalla no puede ofrecer el botón de anular: lo sacaría
+   * también sobre lo ya anulado, y sólo se enteraría al recibir el conflicto.
+   */
+  isReversed: boolean;
+
   createdAt: Date;
 }
 

@@ -26,6 +26,29 @@ export class InsufficientFundsError extends TransferError {
   }
 }
 
+/**
+ * Anular es devolver, no recuperar.
+ *
+ * Sólo puede anular un movimiento quien lo **recibió**: la anulación saca el
+ * dinero de donde entró, y eso únicamente lo puede pedir el dueño de esa
+ * cuenta. Si pudiera pedirlo quien envía, cualquiera podría pagar algo,
+ * llevárselo y volver a llevarse el dinero — y el libro lo dejaría escrito,
+ * pero escrito y ya robado.
+ *
+ * Para un ingreso no hay dos partes: el dinero entra del mundo exterior a una
+ * cuenta tuya, así que el que recibe y el que ingresó son el mismo. La regla no
+ * necesita excepción.
+ *
+ * Viaja al cliente como un 404 sin detalle, igual que `NotYourAccountError`:
+ * distinguir «no existe» de «no es tuya» serviría para ir descubriendo qué
+ * transacciones existen.
+ */
+export class NotYourTransactionError extends TransferError {
+  constructor(readonly transactionId: string) {
+    super(`La transacción ${transactionId} no abonó nada en ninguna cuenta tuya`);
+  }
+}
+
 /** Mover dinero de una cuenta a sí misma no mueve nada. */
 export class SameAccountTransferError extends TransferError {
   constructor(readonly accountId: string) {

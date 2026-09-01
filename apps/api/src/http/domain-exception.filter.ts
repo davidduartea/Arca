@@ -23,6 +23,7 @@ import { InvalidCursorError, InvalidPageSizeError } from "../statements/statemen
 import {
   InsufficientFundsError,
   NonPositiveAmountError,
+  NotYourTransactionError,
   SameAccountTransferError,
 } from "../transfers/transfers.errors";
 
@@ -56,12 +57,12 @@ const TRANSLATIONS: [new (...args: never[]) => Error, Translation][] = [
 
   // ─── 404 ────────────────────────────────────────────────────────────────
   //
-  // **Ninguno de los tres dice de qué tipo es**, y ésa es la única forma de
-  // que el 404 signifique algo. Son dos ideas —«no existe» y «no es tuyo»— y
-  // todo el trabajo de contestar 404 en vez de 403 se pierde si el cuerpo deja
-  // distinguirlas: quien va probando identificadores separaría los suyos de
-  // los ajenos leyendo el nombre del error, que es exactamente el mapa que el
-  // código de estado le estaba negando.
+  // **Ninguno de los cuatro dice de qué tipo es**, y ésa es la única forma de
+  // que el 404 signifique algo. Son dos parejas —«no existe» y «no es tuyo»—
+  // y todo el trabajo de contestar 404 en vez de 403 se pierde si el cuerpo
+  // deja distinguirlas: quien va probando identificadores separaría los suyos
+  // de los ajenos leyendo el nombre del error, que es exactamente el mapa que
+  // el código de estado le estaba negando.
   //
   // Lo que se pierde es un mensaje algo más explicativo cuando de verdad no
   // existe, y no se pierde nada útil: el identificador lo acaba de escribir
@@ -70,6 +71,7 @@ const TRANSLATIONS: [new (...args: never[]) => Error, Translation][] = [
   [UnknownAccountError, { status: HttpStatus.NOT_FOUND, visible: false }],
   [TransactionNotFoundError, { status: HttpStatus.NOT_FOUND, visible: false }],
   [NotYourAccountError, { status: HttpStatus.NOT_FOUND, visible: false }],
+  [NotYourTransactionError, { status: HttpStatus.NOT_FOUND, visible: false }],
 
   // ─── 409 ────────────────────────────────────────────────────────────────
   [InsufficientFundsError, { status: HttpStatus.CONFLICT, visible: true }],

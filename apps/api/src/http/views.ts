@@ -82,6 +82,7 @@ export interface StatementLineView {
   amount: string;
   balance: string;
   isReversal: boolean;
+  isReversed: boolean;
   createdAt: string;
 }
 
@@ -105,6 +106,7 @@ function statementLineView(line: StatementLine): StatementLineView {
     amount: toWire(line.amount),
     balance: toWire(line.balance),
     isReversal: line.isReversal,
+    isReversed: line.isReversed,
     createdAt: line.createdAt.toISOString(),
   };
 }

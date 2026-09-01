@@ -18,7 +18,11 @@ interface EntryRow {
   transactionId: string;
   amount: bigint;
   createdAt: Date;
-  transaction: { description: string; reversesId: string | null };
+  transaction: {
+    description: string;
+    reversesId: string | null;
+    reversedBy: { id: string } | null;
+  };
 }
 
 /**
@@ -74,7 +78,9 @@ export class StatementsService {
         transactionId: true,
         amount: true,
         createdAt: true,
-        transaction: { select: { description: true, reversesId: true } },
+        transaction: {
+          select: { description: true, reversesId: true, reversedBy: { select: { id: true } } },
+        },
       },
     });
 
@@ -136,6 +142,7 @@ export class StatementsService {
         amount: row.amount,
         balance: balance,
         isReversal: row.transaction.reversesId !== null,
+        isReversed: row.transaction.reversedBy !== null,
         createdAt: row.createdAt,
       };
 
