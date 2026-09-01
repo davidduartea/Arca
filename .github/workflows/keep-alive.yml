@@ -1,0 +1,72 @@
+###############################################################################
+# Mantener despierto lo que el plan gratuito duerme.
+#
+# Son dos siestas distintas y las dos importan para un enlace que vive en un CV:
+#
+#   · Render suspende el servicio a los 15 minutos sin peticiones, y volver le
+#     cuesta cerca de un minuto. Quien abre el enlace y ve una pantalla en
+#     blanco no siempre espera.
+#   · Supabase pausa el proyecto ENTERO tras una semana sin actividad, y ese no
+#     vuelve solo: hay que restaurarlo a mano desde el panel.
+#
+# Se llama a `/readyz` y no a `/healthz`, y ahi esta todo el asunto: la
+# comprobacion de vida esta hecha a proposito para NO tocar la base, asi que
+# despertaria a Render y dejaria que Supabase se durmiera igual. `/readyz` si
+# consulta, es publico y no modifica nada.
+###############################################################################
+
+name: Keep alive
+
+on:
+  schedule:
+    # Cada diez minutos, que es menos que los quince de Render.
+    #
+    # GitHub no garantiza la puntualidad de los crones y los retrasa cuando hay
+    # cola; el margen de cinco minutos existe para eso.
+    - cron: "*/10 * * * *"
+
+  # Para poder comprobar a mano que funciona sin esperar al proximo turno.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    name: Despertar la API y la base
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Llamar a /readyz
+        env:
+          # Variable del repositorio y no secreto: es una URL publica, y asi se
+          # ve en el registro de la ejecucion cuando algo falla.
+          #
+          # Settings -> Secrets and variables -> Actions -> Variables:
+          #   API_KEEPALIVE_URL = https://TU-SERVICIO.onrender.com/readyz
+          URL: ${{ vars.API_KEEPALIVE_URL }}
+        run: |
+          if [ -z "$URL" ]; then
+            echo "Falta la variable API_KEEPALIVE_URL. No hay nada que despertar."
+            exit 0
+          fi
+
+          # `--max-time 120` porque un servicio dormido tarda cerca de un minuto
+          # en volver, y el valor por defecto de curl cortaria antes de que
+          # llegue a responder — justo el caso que esto viene a resolver.
+          #
+          # `--retry` con espera creciente por lo mismo: el primer intento puede
+          # morir mientras Render todavia esta levantando el contenedor.
+          code=$(curl --silent --show-error \
+                      --max-time 120 \
+                      --retry 3 --retry-delay 20 --retry-all-errors \
+                      --output /dev/null --write-out '%{http_code}' \
+                      "$URL")
+
+          echo "Respondio $code"
+
+          # Un 503 significa que la API vive pero la base no contesta, y eso hay
+          # que verlo: es justo el sintoma de un proyecto de Supabase pausado,
+          # que no se arregla solo.
+          [ "$code" = "200" ]
