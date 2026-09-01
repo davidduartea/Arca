@@ -4,23 +4,98 @@ import type { NextRequest } from "next/server";
 import { SESSION_COOKIE } from "@/lib/session";
 
 /**
- * Quién puede pasar, decidido antes de renderizar nada.
+ * Lo que corre antes de renderizar nada, y hace dos cosas.
  *
- * El guardia del layout ya redirige a quien no tiene sesión, pero lo hace
- * después de preguntarle a la API quién es — un viaje al servidor para acabar
- * echando a alguien. Aquí se resuelve leyendo la cookie, sin salir del proceso.
+ * **Pone la política de contenido**, con su nonce, que es lo que obliga a que
+ * esto se ejecute en todas las rutas y no sólo en las privadas.
  *
- * Y hace lo que el layout no puede: **distinguir «nunca entró» de «se le pasó
- * la hora»**. Para quien lleva media transferencia escrita, eso es la
- * diferencia entre una pantalla de acceso desconcertante y una que explica.
+ * **Decide quién puede pasar.** El guardia del layout ya redirige a quien no
+ * tiene sesión, pero lo hace después de preguntarle a la API quién es — un
+ * viaje al servidor para acabar echando a alguien. Aquí se resuelve leyendo la
+ * cookie, sin salir del proceso. Y hace lo que el layout no puede: **distinguir
+ * «nunca entró» de «se le pasó la hora»**. Para quien lleva media transferencia
+ * escrita, eso es la diferencia entre una pantalla de acceso desconcertante y
+ * una que explica.
  *
  * En Next 16 esto se llama `proxy` y ya no `middleware`.
  */
 export function proxy(request: NextRequest): NextResponse {
-  const token = request.cookies.get(SESSION_COOKIE)?.value;
-  const { pathname, search } = request.nextUrl;
+  const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
+  const policy = contentSecurityPolicy(nonce);
 
-  if (token && !hasExpired(token)) return NextResponse.next();
+  // Las cabeceras de **petición** son las que lee Next al renderizar: de ahí
+  // saca el nonce para ponérselo a sus propios scripts. Sin esto, la política
+  // bloquearía el arranque de la aplicación en su propia página.
+  const headers = new Headers(request.headers);
+  headers.set("x-nonce", nonce);
+  headers.set("content-security-policy", policy);
+
+  const response = redirectToLogin(request) ?? NextResponse.next({ request: { headers } });
+  response.headers.set("content-security-policy", policy);
+
+  return response;
+}
+
+/**
+ * La política.
+ *
+ * `script-src` es la que importa y es la estricta: sólo se ejecuta lo que
+ * lleve el nonce de esta petición, que se sortea de nuevo cada vez. Con
+ * `strict-dynamic`, lo que cargue un script ya autorizado hereda el permiso,
+ * que es como Next carga sus paquetes.
+ *
+ * `style-src` lleva `'unsafe-inline'` y **no** lleva nonce, a propósito: en
+ * cuanto hay un nonce el navegador ignora `'unsafe-inline'`, y entonces se
+ * caerían los atributos `style` — el de la barra que mide la contraseña, sin ir
+ * más lejos. Hay una directiva para eso, `style-src-attr`, pero no la
+ * implementan todos los navegadores y donde no está se cae a `style-src`. Lo
+ * que se pierde es poco: inyectar estilos no ejecuta código, y lo que de verdad
+ * hay que impedir es que se ejecute algo que no hemos escrito.
+ *
+ * `connect-src 'self'` es la otra mitad de la protección: aunque alguien
+ * lograra ejecutar algo, no tendría a dónde mandárselo.
+ *
+ * En desarrollo hace falta `'unsafe-eval'`: React usa `eval` para reconstruir
+ * las trazas del servidor en el navegador. En producción no.
+ */
+function contentSecurityPolicy(nonce: string): string {
+  const development = process.env.NODE_ENV === "development";
+
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${development ? " 'unsafe-eval'" : ""}`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self'",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "upgrade-insecure-requests",
+  ].join("; ");
+}
+
+/**
+ * Las rutas que exigen sesión.
+ *
+ * `/account` va suelto y sin barra: es una sola pantalla y no cuelga nada de
+ * ella. Escrito como prefijo taparía también a `/accounts`, que es otra cosa.
+ */
+const GUARDED = ["/accounts", "/transfers", "/deposits"];
+
+function isGuarded(pathname: string): boolean {
+  if (pathname === "/account") return true;
+
+  return GUARDED.some((base) => pathname === base || pathname.startsWith(`${base}/`));
+}
+
+function redirectToLogin(request: NextRequest): NextResponse | null {
+  const { pathname, search } = request.nextUrl;
+  if (!isGuarded(pathname)) return null;
+
+  const token = request.cookies.get(SESSION_COOKIE)?.value;
+  if (token && !hasExpired(token)) return null;
 
   const login = new URL("/login", request.url);
 
@@ -65,8 +140,13 @@ function hasExpired(token: string): boolean {
 }
 
 export const config = {
-  // `/account` va suelto y sin `:path*`: es una sola pantalla y no cuelga nada
-  // de ella. Escribirlo como prefijo haría que tapara también a `/accounts`, que
-  // es otra cosa y ya tiene su entrada.
-  matcher: ["/account", "/accounts/:path*", "/transfers/:path*", "/deposits/:path*"],
+  /*
+    Todo menos lo que sirve el propio Next y los archivos estáticos.
+
+    Antes sólo cubría las rutas privadas, porque lo único que hacía era el
+    guardia. Ahora también pone la política de contenido, y una política que
+    sólo cubriera media aplicación dejaría la portada, el acceso y el registro
+    —las tres páginas por las que se entra— sin ella.
+  */
+  matcher: ["/((?!_next/static|_next/image|art/|favicon.ico).*)"],
 };
