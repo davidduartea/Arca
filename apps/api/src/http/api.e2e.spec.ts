@@ -382,13 +382,30 @@ describe("API HTTP", () => {
       expect(response.body.message).not.toContain("tuya");
     });
 
+    /**
+     * «Igual» quiere decir idéntica, byte a byte.
+     *
+     * No basta con que las dos den 404: si el cuerpo llevara el nombre del error
+     * de dominio, `NotYourAccountError` frente a `UnknownAccountError` separaría
+     * las cuentas que existen de las que no, y el 404 no habría escondido nada.
+     */
     it("una cuenta que no existe responde igual que la de otro", async () => {
-      const { token } = await register();
+      const ana = await register();
+      const luis = await register();
+      const theirs = await openAccount(luis.token);
 
-      await request(server)
-        .get(`/accounts/${randomUUID()}`)
-        .set("Authorization", `Bearer ${token}`)
+      const ajena = await request(server)
+        .get(`/accounts/${theirs}`)
+        .set("Authorization", `Bearer ${ana.token}`)
         .expect(404);
+
+      const inventada = await request(server)
+        .get(`/accounts/${randomUUID()}`)
+        .set("Authorization", `Bearer ${ana.token}`)
+        .expect(404);
+
+      expect(ajena.body).toEqual(inventada.body);
+      expect(JSON.stringify(ajena.body)).not.toContain("NotYour");
     });
   });
 

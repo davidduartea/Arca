@@ -55,13 +55,20 @@ const TRANSLATIONS: [new (...args: never[]) => Error, Translation][] = [
   [WrongPasswordError, { status: HttpStatus.FORBIDDEN, visible: true }],
 
   // ─── 404 ────────────────────────────────────────────────────────────────
-  [UnknownAccountError, { status: HttpStatus.NOT_FOUND, visible: true }],
-  [TransactionNotFoundError, { status: HttpStatus.NOT_FOUND, visible: true }],
-
-  // Deliberadamente 404 y no 403. Un 403 confirmaría que esa cuenta existe, y
-  // quien pregunta no tiene por qué averiguarlo probando identificadores. Para
-  // quien no es el dueño, la cuenta sencillamente no está — y el mensaje que
-  // sale es el de «no existe», no el del dominio.
+  //
+  // **Ninguno de los tres dice de qué tipo es**, y ésa es la única forma de
+  // que el 404 signifique algo. Son dos ideas —«no existe» y «no es tuyo»— y
+  // todo el trabajo de contestar 404 en vez de 403 se pierde si el cuerpo deja
+  // distinguirlas: quien va probando identificadores separaría los suyos de
+  // los ajenos leyendo el nombre del error, que es exactamente el mapa que el
+  // código de estado le estaba negando.
+  //
+  // Lo que se pierde es un mensaje algo más explicativo cuando de verdad no
+  // existe, y no se pierde nada útil: el identificador lo acaba de escribir
+  // quien pregunta. La consulta por número de arca, que sí quiere ser amable,
+  // lanza su propio `NotFoundException` con el texto bueno y no pasa por aquí.
+  [UnknownAccountError, { status: HttpStatus.NOT_FOUND, visible: false }],
+  [TransactionNotFoundError, { status: HttpStatus.NOT_FOUND, visible: false }],
   [NotYourAccountError, { status: HttpStatus.NOT_FOUND, visible: false }],
 
   // ─── 409 ────────────────────────────────────────────────────────────────
@@ -87,10 +94,25 @@ const TRANSLATIONS: [new (...args: never[]) => Error, Translation][] = [
   [LedgerInvariantViolatedError, { status: HttpStatus.INTERNAL_SERVER_ERROR, visible: false }],
 ];
 
-const GENERIC_MESSAGES: Partial<Record<HttpStatus, string>> = {
-  [HttpStatus.NOT_FOUND]: "No se ha encontrado",
-  [HttpStatus.INTERNAL_SERVER_ERROR]: "Algo ha ido mal por nuestra parte",
+/**
+ * Lo que sale cuando el error no es visible. El **nombre también** se sustituye.
+ *
+ * Ocultar sólo el mensaje no oculta nada: un 404 que responde
+ * `{"error":"NotYourAccountError"}` deshace su propio 404. El código dice «aquí
+ * no hay nada» y el nombre confirma «existe, y no es tuya», que es exactamente
+ * lo que el código de estado estaba escondiendo. Quien fuera probando
+ * identificadores distinguiría los suyos de los ajenos leyendo ese campo.
+ */
+const GENERIC: Partial<Record<HttpStatus, { error: string; message: string }>> = {
+  [HttpStatus.NOT_FOUND]: { error: "NotFoundError", message: "No se ha encontrado" },
+  [HttpStatus.INTERNAL_SERVER_ERROR]: {
+    error: "InternalError",
+    message: "Algo ha ido mal por nuestra parte",
+  },
 };
+
+/** Cuando ni siquiera hay una forma genérica prevista para ese código. */
+const UNNAMED = { error: "Error", message: "Error" };
 
 /**
  * El único sitio del que sale una respuesta de error.
@@ -119,19 +141,21 @@ export class DomainExceptionFilter implements ExceptionFilter {
       if (status >= HttpStatus.INTERNAL_SERVER_ERROR)
         this.logger.error(error.message, error.stack);
 
-      response.status(status).json({
-        error: error.name,
-        message: visible ? error.message : (GENERIC_MESSAGES[status] ?? "Error"),
-      });
+      response
+        .status(status)
+        .json(
+          visible
+            ? { error: error.name, message: error.message }
+            : (GENERIC[status] ?? UNNAMED),
+        );
       return;
     }
 
     // Nada de esto estaba previsto: se registra entero y sale un 500 pelado.
     this.logger.error(exception);
-    response.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
-      error: "InternalError",
-      message: GENERIC_MESSAGES[HttpStatus.INTERNAL_SERVER_ERROR],
-    });
+    response
+      .status(HttpStatus.INTERNAL_SERVER_ERROR)
+      .json(GENERIC[HttpStatus.INTERNAL_SERVER_ERROR] ?? UNNAMED);
   }
 }
 
