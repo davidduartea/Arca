@@ -15,9 +15,12 @@ import { AccountsService } from "./accounts.service";
  *
  * ## Lo que devuelve, y lo que no
  *
- * Sólo el nombre de la cuenta. Ni el correo de su dueño, ni su saldo, ni su
- * identificador interno. Es lo mínimo que confirma que el número es el
- * correcto.
+ * **El nombre de la persona.** Ni su correo, ni el saldo, ni el identificador
+ * interno de la cuenta — y desde ahora tampoco el nombre de la cuenta, que era
+ * lo que se devolvía antes. Eran dos errores en uno: filtraba a cualquiera con
+ * doce cifras la etiqueta privada que su dueño le puso, y encima no confirmaba
+ * lo que hay que confirmar. Quien va a mandar dinero quiere saber **a quién**,
+ * no cómo llamó esa persona a su cajón.
  *
  * ## Por qué se puede consultar sin ser el dueño
  *
@@ -37,7 +40,7 @@ const LOOKUP_LIMIT = { default: { limit: 20, ttl: 60_000 } };
  * Es el mismo caso que en el controlador del extracto.
  */
 // eslint-disable-next-line no-useless-assignment
-const lookupQuerySchema = z.object({
+const lookupQuerySchema = z.strictObject({
   number: z.string().trim().min(1, "hace falta un número de arca").max(32),
 });
 
@@ -50,18 +53,20 @@ export class AccountLookupController {
   async lookup(
     @Query(new ZodValidationPipe(lookupQuerySchema)) query: { number: string },
   ): Promise<{ name: string }> {
-    const account = await this.accounts.byNumber(query.number);
+    const holder = await this.accounts.holderByNumber(query.number);
 
-    // Mismo 404 para «el dígito no cuadra», «no existe» y «es del sistema»:
-    // quien pregunta no tiene por qué distinguirlos, y distinguirlos serviría
-    // para mapear qué números están emitidos.
-    if (!account || account.kind === "SYSTEM") {
+    // Mismo 404 para «el dígito no cuadra», «no existe», «es del sistema» y
+    // «está cerrada»: quien pregunta no tiene por qué distinguirlos, y
+    // distinguirlos serviría para mapear qué números están emitidos. Que una
+    // cuenta cerrada conteste igual que una inexistente es además lo correcto de
+    // cara a quien va a transferir — a ese número ya no llega el dinero.
+    if (!holder || holder.kind === "SYSTEM" || holder.closed) {
       throw new NotFoundException({
         error: "UnknownAccountError",
         message: "No encontramos ninguna arca con ese número",
       });
     }
 
-    return { name: account.name };
+    return { name: holder.name };
   }
 }

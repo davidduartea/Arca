@@ -32,6 +32,10 @@ export interface AccountView {
   kind: "USER" | "SYSTEM";
   /** Centavos, como texto. */
   balance: string;
+
+  /** Cuándo se cerró, o `null` si sigue abierta. */
+  closedAt: string | null;
+
   createdAt: string;
 }
 
@@ -42,6 +46,7 @@ export function accountView(account: Account, balance: bigint): AccountView {
     number: account.number,
     kind: account.kind,
     balance: toWire(balance),
+    closedAt: account.closedAt?.toISOString() ?? null,
     createdAt: account.createdAt.toISOString(),
   };
 }
@@ -82,6 +87,7 @@ export interface StatementLineView {
   amount: string;
   balance: string;
   isReversal: boolean;
+  isReversed: boolean;
   createdAt: string;
 }
 
@@ -105,6 +111,7 @@ function statementLineView(line: StatementLine): StatementLineView {
     amount: toWire(line.amount),
     balance: toWire(line.balance),
     isReversal: line.isReversal,
+    isReversed: line.isReversed,
     createdAt: line.createdAt.toISOString(),
   };
 }

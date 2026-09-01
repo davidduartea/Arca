@@ -6,9 +6,11 @@ import { ApiError, api } from "@/lib/api";
 import { text } from "@/lib/form";
 import { InvalidAmountError, dollarsToCents, formatUsd } from "@/lib/money";
 import { firstMessage } from "@/lib/validation";
+import { accountIdSchema } from "@/models/accounts/AccountId";
 import { depositSchema } from "@/models/transfers/DepositInput";
 import type { MoveState } from "@/models/transfers/MoveState";
 import type { TransactionView } from "@/models/transfers/TransactionView";
+import { transactionIdSchema } from "@/models/transfers/TransactionId";
 import { transferSchema } from "@/models/transfers/TransferInput";
 
 /**
@@ -100,6 +102,67 @@ export async function deposit(_previous: MoveState, form: FormData): Promise<Mov
   revalidatePath(`/accounts/${toAccountId}`);
 
   return { done: { amount, description: description || "Ingreso" } };
+}
+
+/**
+ * Devolver un movimiento que entró en una cuenta tuya.
+ *
+ * Sólo puede pedirlo quien lo recibió, y eso lo decide la API: aquí no hay
+ * comprobación de propiedad porque una hecha en el navegador no protege de
+ * nada. Lo que sí se comprueba es la forma del identificador, que viaja dentro
+ * de la ruta.
+ *
+ * La cuenta llega aparte y sólo para refrescar su extracto. No se usa para
+ * autorizar nada — si no fuera tuya, la API ya habría contestado que no.
+ */
+export async function reverseTransaction(
+  transactionId: string,
+  accountId: string,
+): Promise<{ ok: true } | { error: string }> {
+  const parsed = transactionIdSchema.safeParse(transactionId);
+  if (!parsed.success) return { error: firstMessage(parsed.error) };
+
+  const account = accountIdSchema.safeParse(accountId);
+  if (!account.success) return { error: firstMessage(account.error) };
+
+  try {
+    await api<TransactionView>(`/transactions/${parsed.data}/reversal`, { method: "POST" });
+  } catch (error) {
+    return toReversalProblem(error);
+  }
+
+  revalidatePath("/accounts");
+  revalidatePath(`/accounts/${account.data}`);
+
+  return { ok: true };
+}
+
+/**
+ * Los tres noes de anular, dichos en cristiano.
+ *
+ * El 404 no se traduce por «no existe»: para quien mira su propio extracto, un
+ * movimiento que la API dice no encontrar es uno que ya no se puede devolver
+ * —lo anuló otro, o nunca fue suyo—. Decirle «no existe» sobre una línea que
+ * está viendo en pantalla sería llamarle mentiroso.
+ */
+function toReversalProblem(error: unknown): { error: string } {
+  if (!(error instanceof ApiError)) {
+    return { error: "No hemos podido conectar. Inténtalo otra vez." };
+  }
+
+  if (error.code === "AlreadyReversedError") {
+    return { error: "Este movimiento ya estaba anulado. Recarga para verlo." };
+  }
+
+  if (error.code === "InsufficientFundsError") {
+    return { error: "Ya no queda bastante en la cuenta para devolverlo." };
+  }
+
+  if (error.status === 404) {
+    return { error: "Este movimiento ya no se puede devolver. Recarga el extracto." };
+  }
+
+  return { error: error.message };
 }
 
 function amountProblem(error: unknown): string {

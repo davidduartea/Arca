@@ -4,9 +4,11 @@ import { SplitNote } from "@/components/SplitNote";
 import { formatUsd } from "@/lib/money";
 import type { AccountView } from "@/models/accounts/AccountView";
 import type { StatementPageView } from "@/models/statements/StatementPageView";
+import { AccountSettings } from "@/modules/accounts/components/AccountSettings";
 import { ReceiveBox } from "@/modules/accounts/components/ReceiveBox";
 import { BalanceAt } from "@/modules/statements/components/BalanceAt";
 import { Statement } from "@/modules/statements/components/Statement";
+import { eyebrowClass } from "@/styles/layout";
 
 /**
  * El extracto de una cuenta: cabecera, saldo a fecha y los movimientos.
@@ -17,11 +19,16 @@ import { Statement } from "@/modules/statements/components/Statement";
 export function StatementScreen({
   account,
   firstPage,
+  holderName,
 }: {
   account: AccountView;
   firstPage: StatementPageView;
+
+  /** El nombre de quien mira, que es el que verá quien le transfiera. */
+  holderName: string;
 }) {
   const empty = firstPage.lines.length === 0;
+  const closed = account.closedAt !== null;
 
   return (
     <>
@@ -51,7 +58,23 @@ export function StatementScreen({
           </p>
         </div>
 
-        <ReceiveBox number={account.number} accountName={account.name} />
+        {/*
+          Cerrada no se enseña el número para recibir: ya no se resuelve, y
+          ofrecerlo para copiar sería mandar a alguien a un sitio sin puerta.
+        */}
+        {closed ? (
+          <p className="max-w-[280px] border border-rule px-s3 py-s2 text-[12.5px] text-ink-2">
+            <span className={`${eyebrowClass} block text-ink-3`}>Cerrada</span>
+            No manda ni recibe dinero. Sus movimientos siguen aquí, y puedes volver a abrirla
+            desde los ajustes.
+          </p>
+        ) : (
+          <ReceiveBox
+            number={account.number}
+            accountName={account.name}
+            holderName={holderName}
+          />
+        )}
       </div>
 
       {/* El filete adornado es de escritorio: en el teléfono no hay sitio que partir. */}
@@ -73,6 +96,17 @@ export function StatementScreen({
       <div className="border-t-[1.5px] border-t-green nav:border-t-0">
         <Statement accountId={account.id} firstPage={firstPage} openedAt={account.createdAt} />
       </div>
+
+      {/*
+        Los ajustes van al final y plegados: esta pantalla se abre cien veces
+        para mirar el saldo y dos en la vida para renombrar o cerrar.
+      */}
+      <AccountSettings
+        accountId={account.id}
+        name={account.name}
+        closed={closed}
+        balance={account.balance}
+      />
     </>
   );
 }

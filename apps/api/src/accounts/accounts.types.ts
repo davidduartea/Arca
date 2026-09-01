@@ -22,5 +22,30 @@ export interface Account {
   number: string;
 
   kind: AccountKind;
+
+  /**
+   * Cuándo se cerró, si se cerró.
+   *
+   * Cerrar no borra: los asientos son inmutables y el extracto se sigue
+   * leyendo. Lo que hace es sacarla de circulación — no se puede transferir
+   * desde ella ni recibir en ella— y se puede deshacer.
+   */
+  closedAt: Date | null;
+
   createdAt: Date;
+}
+
+/**
+ * Lo que se contesta sobre un número de arca ajeno.
+ *
+ * Deliberadamente **no** es una `Account`: quien pregunta no es el dueño, y lo
+ * único que le corresponde saber es a quién pertenece. Ni el identificador
+ * interno, ni el nombre de la cuenta, ni su saldo.
+ */
+export interface AccountHolder {
+  /** El nombre de la persona, no el de la cuenta. */
+  name: string;
+
+  kind: AccountKind;
+  closed: boolean;
 }

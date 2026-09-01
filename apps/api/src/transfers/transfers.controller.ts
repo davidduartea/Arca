@@ -4,8 +4,10 @@ import {
   HttpCode,
   HttpStatus,
   NotFoundException,
+  Param,
   Post,
 } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import { z } from "zod";
 
 import { AccountsService } from "../accounts/accounts.service";
@@ -37,6 +39,17 @@ const amountInCents = z
 const accountIdSchema = z.string().uuid("no es un identificador de cuenta");
 
 /**
+ * Falso positivo conocido: `no-useless-assignment` no ve los usos que hay
+ * dentro de un decorador de parámetro, y ésta se usa más abajo en `@Param`.
+ * Es el mismo caso que en el controlador de la consulta de números.
+ */
+// eslint-disable-next-line no-useless-assignment
+const transactionIdSchema = z.string().uuid("no es un identificador de movimiento");
+
+/** Ver el comentario de la ruta: veinte al minuto, como la consulta de números. */
+const REVERSAL_LIMIT = { default: { limit: 20, ttl: 60_000 } };
+
+/**
  * El destino se teclea, asi que llega como numero de arca y no como uuid.
  *
  * Se acepta escrito de cualquier forma. Quien lo comprueba de verdad es
@@ -45,7 +58,7 @@ const accountIdSchema = z.string().uuid("no es un identificador de cuenta");
  */
 const arcaNumberSchema = z.string().trim().min(12, "un numero de arca son doce cifras").max(32);
 
-const transferOrderSchema = z.object({
+const transferOrderSchema = z.strictObject({
   fromAccountId: accountIdSchema,
   toAccountNumber: arcaNumberSchema,
   amount: amountInCents,
@@ -53,7 +66,7 @@ const transferOrderSchema = z.object({
   idempotencyKey: z.string().trim().min(8).max(128).optional(),
 });
 
-const depositOrderSchema = z.object({
+const depositOrderSchema = z.strictObject({
   toAccountId: accountIdSchema,
   amount: amountInCents,
   description: z.string().trim().min(1).max(140).optional(),
@@ -81,16 +94,17 @@ export class TransfersController {
     @Body(new ZodValidationPipe(transferOrderSchema))
     body: z.output<typeof transferOrderSchema>,
   ): Promise<TransactionView> {
-    await this.accounts.requireOwnedBy(body.fromAccountId, user.id);
+    await this.accounts.requireUsable(body.fromAccountId, user.id);
 
     const { toAccountNumber, ...order } = body;
     const destination = await this.accounts.byNumber(toAccountNumber);
 
     // Mismo rechazo si el dígito de control no cuadra, si el número no está
-    // emitido o si apunta a una cuenta de sistema: quien transfiere no tiene
-    // por qué distinguirlos, y distinguirlos serviría para ir mapeando qué
-    // números existen.
-    if (!destination || destination.kind === "SYSTEM") {
+    // emitido, si apunta a una cuenta de sistema o si está cerrada: quien
+    // transfiere no tiene por qué distinguirlos, y distinguirlos serviría para
+    // ir mapeando qué números existen. Que una cerrada conteste como una
+    // inexistente es además lo cierto — a ese número ya no llega el dinero.
+    if (!destination || destination.kind === "SYSTEM" || destination.closedAt) {
       throw new NotFoundException({
         error: "UnknownAccountError",
         message: "No encontramos ninguna arca con ese número",
@@ -117,7 +131,7 @@ export class TransfersController {
     @CurrentUser() user: AuthenticatedUser,
     @Body(new ZodValidationPipe(depositOrderSchema)) body: z.output<typeof depositOrderSchema>,
   ): Promise<TransactionView> {
-    await this.accounts.requireOwnedBy(body.toAccountId, user.id);
+    await this.accounts.requireUsable(body.toAccountId, user.id);
 
     return transactionView(
       await this.transfers.transfer({
@@ -126,5 +140,28 @@ export class TransfersController {
         description: body.description ?? "Ingreso",
       }),
     );
+  }
+
+  /**
+   * Devuelve un movimiento que entró en una cuenta tuya.
+   *
+   * El identificador va en la ruta y no en el cuerpo porque es el recurso sobre
+   * el que se actúa, no un dato del formulario. Y no lleva cuerpo: no hay nada
+   * que elegir — el importe, las cuentas y el concepto salen todos del original.
+   *
+   * El límite es el estricto y no el general. Anular exige conocer el
+   * identificador de una transacción, así que probar a ciegas es caro; pero
+   * probar a ciegas es justo lo que haría quien quisiera descubrir cuáles
+   * existen, porque la respuesta cuando no es tuya es un 404 igual que cuando no
+   * existe. Veinte al minuto sobran para el uso legítimo.
+   */
+  @Post("transactions/:transactionId/reversal")
+  @Throttle(REVERSAL_LIMIT)
+  @HttpCode(HttpStatus.CREATED)
+  async reverse(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("transactionId", new ZodValidationPipe(transactionIdSchema)) transactionId: string,
+  ): Promise<TransactionView> {
+    return transactionView(await this.transfers.reverse({ transactionId, ownerId: user.id }));
   }
 }

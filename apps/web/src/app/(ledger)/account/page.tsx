@@ -17,5 +17,5 @@ export default async function AccountPage() {
   const user = await currentUser();
   if (!user) redirect("/login");
 
-  return <AccountScreen email={user.email} />;
+  return <AccountScreen email={user.email} name={user.name} />;
 }

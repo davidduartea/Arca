@@ -7,6 +7,7 @@ import type { NestExpressApplication } from "@nestjs/platform-express";
 import { AppModule } from "./app.module";
 import { loadDotEnvFile } from "./config/dotenv";
 import { loadEnvironment } from "./config/environment";
+import { securityHeaders } from "./http/security-headers";
 
 async function bootstrap(): Promise<void> {
   // En desarrollo la configuración vive en un archivo; en producción, en el
@@ -21,6 +22,8 @@ async function bootstrap(): Promise<void> {
   // De cuántos proxies fiarse al deducir la IP de quien llama. De ello depende
   // que la limitación de intentos cuente a la persona correcta.
   app.set("trust proxy", env.TRUST_PROXY_HOPS);
+
+  app.use(securityHeaders);
 
   // Sin esto, `onModuleDestroy` nunca corre y el pool de Postgres se queda
   // abierto al recibir SIGTERM: el orquestador acaba matando el proceso a la

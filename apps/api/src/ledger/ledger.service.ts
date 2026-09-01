@@ -163,28 +163,63 @@ export class LedgerService {
    * modo que el histórico cuenta lo que pasó de verdad, incluido el error.
    */
   async reverse(transactionId: string, description?: string): Promise<PostedTransaction> {
+    const draft = await this.draftReversal(this.prisma, transactionId, description);
+
+    return this.write(draft, transactionId);
+  }
+
+  /**
+   * Como `reverse`, pero dentro de una transacción que abrió otro.
+   *
+   * Existe por la misma razón que `postWithin`, y por una más grave: **el libro
+   * no comprueba fondos**. Esa guarda vive en quien mueve dinero, porque es
+   * quien sabe que una cuenta de sistema puede estar en negativo y una de
+   * verdad no. Anular un cobro devuelve dinero, o sea que lo saca de donde
+   * entró, y si eso se hace sin bloquear la cuenta y mirar el saldo dentro de
+   * la misma transacción, un ingreso ya gastado deja la cuenta en descubierto.
+   *
+   * Sin esto no había forma de anular con esa guarda puesta: `reverse` abre su
+   * propia transacción y para cuando escribe ya es tarde para negarse.
+   */
+  async reverseWithin(
+    tx: LedgerExecutor,
+    transactionId: string,
+    description?: string,
+  ): Promise<PostedTransaction> {
+    const draft = await this.draftReversal(tx, transactionId, description);
+
+    return toPosted(await this.insert(tx, draft, transactionId));
+  }
+
+  /**
+   * La transacción contraria: los mismos asientos con el signo cambiado.
+   *
+   * La comprobación de «ya está anulada» es un camino rápido para dar un error
+   * claro, no la garantía. La garantía es el índice único sobre `reverses_id`,
+   * que se comprueba al escribir: entre esta consulta y la escritura cabe otra
+   * petición.
+   */
+  private async draftReversal(
+    executor: LedgerExecutor,
+    transactionId: string,
+    description?: string,
+  ): Promise<TransactionDraft> {
     const original = await this.byId(transactionId);
     if (!original) throw new TransactionNotFoundError(transactionId);
 
-    // Camino rápido para dar un error claro. La garantía de que no se anula dos
-    // veces es el índice único sobre `reverses_id`, que se comprueba al
-    // escribir: entre esta consulta y la escritura cabe otra petición.
-    const reversal = await this.prisma.transaction.findUnique({
+    const reversal = await executor.transaction.findUnique({
       where: { reversesId: transactionId },
       select: { id: true },
     });
     if (reversal) throw new AlreadyReversedError(transactionId);
 
-    return this.write(
-      {
-        description: description ?? `Anulación de «${original.description}»`,
-        entries: original.entries.map((entry) => ({
-          accountId: entry.accountId,
-          amount: -entry.amount,
-        })),
-      },
-      transactionId,
-    );
+    return {
+      description: description ?? `Anulación de «${original.description}»`,
+      entries: original.entries.map((entry) => ({
+        accountId: entry.accountId,
+        amount: -entry.amount,
+      })),
+    };
   }
 
   /**

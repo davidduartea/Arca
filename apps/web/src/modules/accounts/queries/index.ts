@@ -11,11 +11,23 @@ import type { AccountView } from "@/models/accounts/AccountView";
  * publicarlas como endpoints. Ver `auth.queries.ts` para el razonamiento.
  */
 
-/** Mis cuentas, con su saldo derivado. */
+/** Mis cuentas, con su saldo derivado. Las cerradas también. */
 export async function listAccounts(): Promise<AccountView[]> {
   const { accounts } = await api<{ accounts: AccountView[] }>("/accounts");
 
   return accounts;
+}
+
+/**
+ * Las que sirven para mover dinero ahora mismo.
+ *
+ * Una cerrada no manda ni recibe, así que ofrecerla en el desplegable de
+ * «Desde» sería ofrecer algo que la API va a rechazar. La lista de cuentas sí
+ * las enseña —marcadas— porque ahí lo que se mira es el histórico, no lo que se
+ * puede hacer.
+ */
+export async function listOpenAccounts(): Promise<AccountView[]> {
+  return (await listAccounts()).filter((account) => account.closedAt === null);
 }
 
 /**

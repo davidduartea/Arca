@@ -1,4 +1,14 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+} from "@nestjs/common";
 import { z } from "zod";
 
 import { CurrentUser } from "../auth/current-user.decorator";
@@ -16,9 +26,13 @@ import { AccountsService } from "./accounts.service";
  * comprobación de fondos. Si el cliente pudiera elegirlo, cualquiera abriría una
  * cuenta de sistema y se transferiría dinero desde la nada.
  */
-const newAccountSchema = z.object({
-  name: z.string().trim().min(1, "hace falta un nombre").max(80),
-});
+const ACCOUNT_NAME = z.string().trim().min(1, "hace falta un nombre").max(80);
+
+const newAccountSchema = z.strictObject({ name: ACCOUNT_NAME });
+
+const renameSchema = z.strictObject({ name: ACCOUNT_NAME });
+
+const accountIdSchema = z.string().uuid("no es un identificador de cuenta");
 
 @Controller("accounts")
 export class AccountsController {
@@ -64,6 +78,67 @@ export class AccountsController {
     @Param("accountId") accountId: string,
   ): Promise<AccountView> {
     const account = await this.accounts.requireOwnedBy(accountId, user.id);
+
+    return accountView(account, await this.ledger.balanceOf(account.id));
+  }
+
+  /**
+   * Le cambia el nombre.
+   *
+   * Una cuenta se abría y ya está: mal nombrada, se quedaba así para siempre.
+   * Renombrar no tiene consecuencias en ninguna parte — quien la identifica es
+   * el número, que no se toca, y el extracto y los asientos siguen igual.
+   *
+   * Se puede renombrar una cuenta cerrada: es su etiqueta, y ordenar lo que ya
+   * no se usa es parte de por qué alguien la cerró.
+   */
+  @Patch(":accountId")
+  async rename(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("accountId", new ZodValidationPipe(accountIdSchema)) accountId: string,
+    @Body(new ZodValidationPipe(renameSchema)) body: { name: string },
+  ): Promise<AccountView> {
+    const account = await this.accounts.rename(accountId, user.id, body.name);
+
+    return accountView(account, await this.ledger.balanceOf(account.id));
+  }
+
+  /**
+   * La cierra: deja de mandar y de recibir, y su extracto se sigue leyendo.
+   *
+   * Sub-recurso y no un campo en el `PATCH` de arriba porque no es un dato de
+   * la cuenta sino un acto con sus propias reglas — hay que estar a cero — y con
+   * su propio deshacer, que es el `DELETE` de abajo. Escrito como un campo más,
+   * `{"name":"Ahorro","closed":true}` haría dos cosas distintas en una llamada y
+   * una de las dos puede fallar.
+   *
+   * El saldo se pasa como función: el servicio de cuentas no sabe sumar
+   * asientos —y no debe, el saldo es del libro— pero tampoco tiene por qué
+   * calcularse antes de saber que la cuenta es de quien la cierra.
+   */
+  @Post(":accountId/closure")
+  @HttpCode(HttpStatus.OK)
+  async close(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("accountId", new ZodValidationPipe(accountIdSchema)) accountId: string,
+  ): Promise<AccountView> {
+    let balance: bigint | undefined;
+    const balanceOf = async (): Promise<bigint> =>
+      (balance ??= await this.ledger.balanceOf(accountId));
+
+    const account = await this.accounts.close(accountId, user.id, balanceOf);
+
+    return accountView(account, await balanceOf());
+  }
+
+  /** La vuelve a abrir. Un cierre sin vuelta atrás sería una cuenta perdida. */
+  @Delete(":accountId/closure")
+  @HttpCode(HttpStatus.OK)
+  async reopen(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("accountId", new ZodValidationPipe(accountIdSchema)) accountId: string,
+  ): Promise<AccountView> {
+    const account = await this.accounts.reopen(accountId, user.id);
 
     return accountView(account, await this.ledger.balanceOf(account.id));
   }

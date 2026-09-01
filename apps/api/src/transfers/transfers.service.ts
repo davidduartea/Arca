@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 
-import { UnknownAccountError } from "../ledger/ledger.errors";
+import { TransactionNotFoundError, UnknownAccountError } from "../ledger/ledger.errors";
 import type { LedgerExecutor } from "../ledger/ledger.service";
 import { LedgerService } from "../ledger/ledger.service";
 import type { PostedTransaction, TransactionDraft } from "../ledger/ledger.types";
@@ -10,9 +10,10 @@ import { formatUsd } from "../shared/money";
 import {
   InsufficientFundsError,
   NonPositiveAmountError,
+  NotYourTransactionError,
   SameAccountTransferError,
 } from "./transfers.errors";
-import type { TransferOrder } from "./transfers.types";
+import type { ReversalOrder, TransferOrder } from "./transfers.types";
 
 /**
  * Cuánto está dispuesta a esperar una transferencia.
@@ -93,6 +94,59 @@ export class TransfersService {
     } catch (error) {
       return await this.recoverFromReplay(error, draft);
     }
+  }
+
+  /**
+   * Anula un movimiento: devuelve lo que entró.
+   *
+   * **Sólo puede pedirlo quien lo recibió.** La anulación saca el dinero de las
+   * cuentas donde entró, y dejar que lo pidiera quien envía convertiría el
+   * libro en una herramienta de robo: pagas, te llevas la mercancía y te
+   * llevas otra vez el dinero. Que quede escrito no lo arregla.
+   *
+   * Un ingreso no tiene dos partes —entra del mundo exterior a una cuenta
+   * tuya—, así que quien recibe y quien ingresó son el mismo y la regla vale
+   * igual sin excepción.
+   *
+   * La comprobación de fondos es la razón de que esto no sea una llamada suelta
+   * a `ledger.reverse`: devolver lo que ya te gastaste dejaría la cuenta en
+   * descubierto. Va con las cuentas bloqueadas y dentro de la misma
+   * transacción, como una transferencia.
+   */
+  async reverse(order: ReversalOrder): Promise<PostedTransaction> {
+    const original = await this.ledger.byId(order.transactionId);
+    if (!original) throw new TransactionNotFoundError(order.transactionId);
+
+    // Lo que la anulación va a sacar es exactamente lo que la original metió.
+    const credited = original.entries.filter((entry) => entry.amount > 0n);
+    const owned = await this.accountsOwnedBy(
+      credited.map((entry) => entry.accountId),
+      order.ownerId,
+    );
+    if (owned.size === 0) throw new NotYourTransactionError(order.transactionId);
+
+    return this.prisma.$transaction(async (tx) => {
+      await lockAccounts(
+        tx,
+        original.entries.map((entry) => entry.accountId),
+      );
+
+      for (const entry of credited) {
+        await this.assertSufficientFunds(tx, entry.accountId, entry.amount);
+      }
+
+      return this.ledger.reverseWithin(tx, order.transactionId, order.description);
+    }, WAIT_LIMITS);
+  }
+
+  /** De estas cuentas, cuáles son suyas. */
+  private async accountsOwnedBy(accountIds: string[], ownerId: string): Promise<Set<string>> {
+    const rows = await this.prisma.account.findMany({
+      where: { id: { in: accountIds }, ownerId },
+      select: { id: true },
+    });
+
+    return new Set(rows.map((row) => row.id));
   }
 
   /**

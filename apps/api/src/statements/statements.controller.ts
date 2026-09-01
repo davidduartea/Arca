@@ -17,7 +17,7 @@ import { StatementsService } from "./statements.service";
  * también aquí sería tenerla en dos sitios que se pueden desincronizar. Un
  * `limit=abc` llega como `NaN` y el servicio lo rechaza con su propio error.
  */
-const statementQuerySchema = z.object({
+const statementQuerySchema = z.strictObject({
   cursor: z.string().optional(),
   limit: z.coerce.number().optional(),
 });
@@ -30,7 +30,7 @@ const statementQuerySchema = z.object({
  * `@Query`. Su hermana de arriba, idéntica en forma, no lo dispara.
  */
 // eslint-disable-next-line no-useless-assignment
-const balanceQuerySchema = z.object({
+const balanceQuerySchema = z.strictObject({
   at: z
     .string()
     .optional()

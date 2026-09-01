@@ -11,7 +11,9 @@ import {
 import type {
   AuthenticatedUser,
   Credentials,
+  NameChange,
   PasswordChange,
+  Registration,
   Session,
   TokenPayload,
 } from "./auth.types";
@@ -38,14 +40,14 @@ export class AuthService {
     private readonly tokens: TokenService,
   ) {}
 
-  async register(credentials: Credentials): Promise<Session> {
-    const email = normalizeEmail(credentials.email);
-    const passwordHash = await hashPassword(credentials.password);
+  async register(registration: Registration): Promise<Session> {
+    const email = normalizeEmail(registration.email);
+    const passwordHash = await hashPassword(registration.password);
 
     try {
       const user = await this.prisma.user.create({
-        data: { email, passwordHash },
-        select: { id: true, email: true, tokenVersion: true },
+        data: { email, name: registration.name, passwordHash },
+        select: { id: true, email: true, name: true, tokenVersion: true },
       });
 
       return this.openSession(user, user.tokenVersion);
@@ -70,7 +72,7 @@ export class AuthService {
 
     const user = await this.prisma.user.findUnique({
       where: { email },
-      select: { id: true, email: true, passwordHash: true, tokenVersion: true },
+      select: { id: true, email: true, name: true, passwordHash: true, tokenVersion: true },
     });
 
     if (!user) {
@@ -81,7 +83,10 @@ export class AuthService {
     const matches = await verifyPassword(credentials.password, user.passwordHash);
     if (!matches) throw new InvalidCredentialsError();
 
-    return this.openSession({ id: user.id, email: user.email }, user.tokenVersion);
+    return this.openSession(
+      { id: user.id, email: user.email, name: user.name },
+      user.tokenVersion,
+    );
   }
 
   /**
@@ -100,7 +105,7 @@ export class AuthService {
   async authenticate(payload: TokenPayload): Promise<AuthenticatedUser | null> {
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { id: true, email: true, tokenVersion: true },
+      select: { id: true, email: true, name: true, tokenVersion: true },
     });
 
     if (!user) return null;
@@ -108,8 +113,9 @@ export class AuthService {
 
     // El correo sale de la base y no del token: si cambiara, lo firmado se
     // quedaría viejo y el resto de la aplicación leería una dirección que ya no
-    // es la suya.
-    return { id: user.id, email: user.email };
+    // es la suya. El nombre ni siquiera va firmado, por lo mismo y más: cambia
+    // con un formulario, y un token dura una hora.
+    return { id: user.id, email: user.email, name: user.name };
   }
 
   /**
@@ -126,7 +132,7 @@ export class AuthService {
   async changePassword(userId: string, change: PasswordChange): Promise<Session> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true, passwordHash: true },
+      select: { id: true, email: true, name: true, passwordHash: true },
     });
 
     // El guardia ya comprobó que existe. Esto es el cinturón por si algún día
@@ -147,10 +153,31 @@ export class AuthService {
     const updated = await this.prisma.user.update({
       where: { id: userId },
       data: { passwordHash, tokenVersion: { increment: 1 } },
-      select: { id: true, email: true, tokenVersion: true },
+      select: { id: true, email: true, name: true, tokenVersion: true },
     });
 
-    return this.openSession({ id: updated.id, email: updated.email }, updated.tokenVersion);
+    return this.openSession(
+      { id: updated.id, email: updated.email, name: updated.name },
+      updated.tokenVersion,
+    );
+  }
+
+  /**
+   * Cambia el nombre y devuelve quién es ahora.
+   *
+   * No toca la versión de sesión: nadie tiene que volver a entrar por corregir
+   * cómo se escribe su apellido. El nombre no va firmado dentro del token
+   * justamente para que esto pueda ser así de barato — el guardia lo relee de
+   * la base en cada petición.
+   */
+  async changeName(userId: string, change: NameChange): Promise<AuthenticatedUser> {
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: { name: change.name },
+      select: { id: true, email: true, name: true },
+    });
+
+    return updated;
   }
 
   /**

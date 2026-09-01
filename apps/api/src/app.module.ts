@@ -5,17 +5,27 @@ import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import { AccountsModule } from "./accounts/accounts.module";
 import { AuthModule } from "./auth/auth.module";
 import { JwtAuthGuard } from "./auth/jwt-auth.guard";
+import { TokenService } from "./auth/token.service";
 import { DomainExceptionFilter } from "./http/domain-exception.filter";
+import { GLOBAL_RATE_LIMIT, RATE_LIMIT_MESSAGE, trackerFor } from "./http/rate-limit";
 import { LedgerModule } from "./ledger/ledger.module";
 import { StatementsModule } from "./statements/statements.module";
 import { TransfersModule } from "./transfers/transfers.module";
 
-/** Un techo general para que nadie pueda martillear la API. */
-const GLOBAL_RATE_LIMIT = { name: "default", ttl: 60_000, limit: 120 };
-
 @Module({
   imports: [
-    ThrottlerModule.forRoot({ throttlers: [GLOBAL_RATE_LIMIT] }),
+    // Asíncrono sólo por una razón: contar por persona en vez de por IP exige
+    // comprobar la firma del token, y para eso hay que inyectar el servicio que
+    // guarda el secreto. Ver `trackerFor`.
+    ThrottlerModule.forRootAsync({
+      imports: [AuthModule],
+      inject: [TokenService],
+      useFactory: (tokens: TokenService) => ({
+        throttlers: [GLOBAL_RATE_LIMIT],
+        errorMessage: RATE_LIMIT_MESSAGE,
+        getTracker: (request: Record<string, unknown>) => trackerFor(request, tokens),
+      }),
+    }),
     AccountsModule,
     AuthModule,
     LedgerModule,

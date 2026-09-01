@@ -3,13 +3,14 @@ import type { Server } from "node:http";
 
 import type { INestApplication } from "@nestjs/common";
 import request from "supertest";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { PrismaService } from "../prisma/prisma.service";
 import { WORLD_ACCOUNT_ID } from "../shared/system-account";
 import { createTestingApp, truncateAll } from "../test/database";
 
 const PASSWORD = "una-contraseña-larga";
+const NAME = "Ana Duarte";
 
 /**
  * La API por HTTP de verdad, con guardias y filtro de errores puestos.
@@ -37,14 +38,15 @@ describe("API HTTP", () => {
     await truncateAll(prisma);
   });
 
-  const register = async (email = `${randomUUID()}@arca.test`) => {
+  const register = async (email = `${randomUUID()}@arca.test`, name = NAME) => {
     const response = await request(server)
       .post("/auth/register")
-      .send({ email, password: PASSWORD })
+      .send({ name, email, password: PASSWORD })
       .expect(201);
 
     return {
       email,
+      name,
       token: response.body.token as string,
       userId: response.body.user.id as string,
     };
@@ -87,7 +89,7 @@ describe("API HTTP", () => {
     it("registrarse devuelve el usuario y un token", async () => {
       const response = await request(server)
         .post("/auth/register")
-        .send({ email: "ana@arca.test", password: PASSWORD })
+        .send({ name: NAME, email: "ana@arca.test", password: PASSWORD })
         .expect(201);
 
       expect(response.body.user.email).toBe("ana@arca.test");
@@ -98,7 +100,7 @@ describe("API HTTP", () => {
     it("nunca devuelve el hash de la contraseña", async () => {
       const response = await request(server)
         .post("/auth/register")
-        .send({ email: "ana@arca.test", password: PASSWORD })
+        .send({ name: NAME, email: "ana@arca.test", password: PASSWORD })
         .expect(201);
 
       expect(JSON.stringify(response.body)).not.toContain("scrypt");
@@ -108,7 +110,7 @@ describe("API HTTP", () => {
     it("normaliza el correo a minúsculas", async () => {
       await request(server)
         .post("/auth/register")
-        .send({ email: "  Ana@Arca.Test  ", password: PASSWORD })
+        .send({ name: NAME, email: "  Ana@Arca.Test  ", password: PASSWORD })
         .expect(201);
 
       // Y por tanto se puede entrar escribiéndolo de cualquier forma.
@@ -123,19 +125,19 @@ describe("API HTTP", () => {
 
       await request(server)
         .post("/auth/register")
-        .send({ email: "ana@arca.test", password: PASSWORD })
+        .send({ name: NAME, email: "ana@arca.test", password: PASSWORD })
         .expect(409);
     });
 
     it("exige una contraseña larga y un correo con forma de correo", async () => {
       await request(server)
         .post("/auth/register")
-        .send({ email: "ana@arca.test", password: "corta" })
+        .send({ name: NAME, email: "ana@arca.test", password: "corta" })
         .expect(400);
 
       await request(server)
         .post("/auth/register")
-        .send({ email: "no-es-un-correo", password: PASSWORD })
+        .send({ name: NAME, email: "no-es-un-correo", password: PASSWORD })
         .expect(400);
     });
 
@@ -154,6 +156,92 @@ describe("API HTTP", () => {
 
       // Distinguirlos diría a quien prueba qué correos están registrados.
       expect(wrongPassword.body.message).toBe(unknownEmail.body.message);
+    });
+
+    it("el nombre hace falta y no puede ser sólo espacios", async () => {
+      await request(server)
+        .post("/auth/register")
+        .send({ email: "ana@arca.test", password: PASSWORD })
+        .expect(400);
+
+      await request(server)
+        .post("/auth/register")
+        .send({ name: "   ", email: "ana@arca.test", password: PASSWORD })
+        .expect(400);
+    });
+
+    it("el nombre viaja con la sesión, recortado", async () => {
+      const response = await request(server)
+        .post("/auth/register")
+        .send({ name: "  Ana Duarte  ", email: "ana@arca.test", password: PASSWORD })
+        .expect(201);
+
+      expect(response.body.user.name).toBe("Ana Duarte");
+
+      // Y también al volver a entrar, y al preguntar quién eres.
+      const session = await request(server)
+        .post("/auth/login")
+        .send({ email: "ana@arca.test", password: PASSWORD })
+        .expect(200);
+
+      expect(session.body.user.name).toBe("Ana Duarte");
+
+      const me = await request(server)
+        .get("/auth/me")
+        .set("Authorization", `Bearer ${session.body.token as string}`)
+        .expect(200);
+
+      expect(me.body.user.name).toBe("Ana Duarte");
+    });
+
+    it("se puede cambiar el nombre sin volver a entrar", async () => {
+      const { token } = await register("ana@arca.test");
+
+      const changed = await request(server)
+        .patch("/auth/name")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ name: "Ana Duarte Pérez" })
+        .expect(200);
+
+      expect(changed.body.user.name).toBe("Ana Duarte Pérez");
+
+      // El mismo token de antes: cambiar el nombre no cierra ninguna sesión.
+      const me = await request(server)
+        .get("/auth/me")
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+
+      expect(me.body.user.name).toBe("Ana Duarte Pérez");
+    });
+
+    it("un nombre en blanco no se acepta al cambiarlo", async () => {
+      const { token } = await register();
+
+      await request(server)
+        .patch("/auth/name")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ name: "  " })
+        .expect(400);
+    });
+
+    /**
+     * Lo que de verdad guarda `z.strictObject`.
+     *
+     * Un campo que nadie esperaba es un 400 y no un campo que se ignora en
+     * silencio. Aquí el de más es `tokenVersion`, que es una columna de verdad:
+     * mientras el esquema se lo tragaba, el objeto validado no era el objeto
+     * que salía de él.
+     */
+    it("un campo que nadie pidió es un 400", async () => {
+      await request(server)
+        .post("/auth/register")
+        .send({
+          name: NAME,
+          email: "ana@arca.test",
+          password: PASSWORD,
+          tokenVersion: 99,
+        })
+        .expect(400);
     });
   });
 
@@ -338,18 +426,31 @@ describe("API HTTP", () => {
       expect(response.body.balance).toBe("0");
     });
 
-    it("no deja abrir una cuenta de sistema", async () => {
+    /**
+     * Antes el `kind` se ignoraba en silencio; ahora es un 400.
+     *
+     * Lo segundo es mejor por lo mismo que `z.strictObject` existe: mientras el
+     * campo se colaba y se tiraba, el objeto validado no era el objeto que
+     * salía del esquema, y bastaba un `data: body` en cualquier escritura para
+     * que llegara a la base. Y quien lo mandó se entera de que no se le hizo
+     * caso, en vez de creer que abrió una cuenta de sistema.
+     */
+    it("no deja ni intentar abrir una cuenta de sistema", async () => {
       const { token } = await register();
 
-      const response = await request(server)
+      await request(server)
         .post("/accounts")
         .set("Authorization", `Bearer ${token}`)
         .send({ name: "Trampa", kind: "SYSTEM" })
-        .expect(201);
+        .expect(400);
 
-      // El campo se ignora. Si se aceptara, cualquiera abriría una cuenta que
-      // se salta la comprobación de fondos y se transferiría dinero de la nada.
-      expect(response.body.kind).toBe("USER");
+      // Y no se ha abierto nada.
+      const response = await request(server)
+        .get("/accounts")
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+
+      expect(response.body.accounts).toHaveLength(0);
     });
 
     it("cada cual sólo ve las suyas", async () => {
@@ -382,13 +483,30 @@ describe("API HTTP", () => {
       expect(response.body.message).not.toContain("tuya");
     });
 
+    /**
+     * «Igual» quiere decir idéntica, byte a byte.
+     *
+     * No basta con que las dos den 404: si el cuerpo llevara el nombre del error
+     * de dominio, `NotYourAccountError` frente a `UnknownAccountError` separaría
+     * las cuentas que existen de las que no, y el 404 no habría escondido nada.
+     */
     it("una cuenta que no existe responde igual que la de otro", async () => {
-      const { token } = await register();
+      const ana = await register();
+      const luis = await register();
+      const theirs = await openAccount(luis.token);
 
-      await request(server)
-        .get(`/accounts/${randomUUID()}`)
-        .set("Authorization", `Bearer ${token}`)
+      const ajena = await request(server)
+        .get(`/accounts/${theirs}`)
+        .set("Authorization", `Bearer ${ana.token}`)
         .expect(404);
+
+      const inventada = await request(server)
+        .get(`/accounts/${randomUUID()}`)
+        .set("Authorization", `Bearer ${ana.token}`)
+        .expect(404);
+
+      expect(ajena.body).toEqual(inventada.body);
+      expect(JSON.stringify(ajena.body)).not.toContain("NotYour");
     });
   });
 
@@ -598,9 +716,17 @@ describe("API HTTP", () => {
       expect(first.number).not.toBe(second.number);
     });
 
+    /**
+     * Lo que se confirma antes de mandar dinero es **a quién** se manda.
+     *
+     * Antes se devolvía el nombre de la cuenta, y eran dos errores en uno:
+     * cualquiera con doce cifras leía la etiqueta privada que su dueño le puso,
+     * y encima no confirmaba nada útil — cómo llamó alguien a su cajón no dice
+     * quién es.
+     */
     it("se puede consultar a quién pertenece, para confirmar antes de mandar", async () => {
-      const luis = await register();
-      const account = await openAccountNumber(luis.token, "Cuenta de Luis");
+      const luis = await register(`${randomUUID()}@arca.test`, "Luis Ferrer");
+      const account = await openAccountNumber(luis.token, "Ahorro para el divorcio");
       const ana = await register();
 
       // Lo consulta Ana, que no es la dueña: para eso está un número de arca.
@@ -609,12 +735,12 @@ describe("API HTTP", () => {
         .set("Authorization", `Bearer ${ana.token}`)
         .expect(200);
 
-      expect(response.body.name).toBe("Cuenta de Luis");
+      expect(response.body.name).toBe("Luis Ferrer");
     });
 
-    it("la consulta no filtra nada más que el nombre", async () => {
-      const luis = await register();
-      const account = await openAccountNumber(luis.token);
+    it("la consulta no filtra el nombre de la cuenta, ni ninguna otra cosa", async () => {
+      const luis = await register(`${randomUUID()}@arca.test`, "Luis Ferrer");
+      const account = await openAccountNumber(luis.token, "Ahorro para el divorcio");
       const ana = await register();
 
       const response = await request(server)
@@ -624,6 +750,26 @@ describe("API HTTP", () => {
 
       // Ni el saldo, ni el correo del dueño, ni el identificador interno.
       expect(Object.keys(response.body)).toEqual(["name"]);
+      expect(JSON.stringify(response.body)).not.toContain("divorcio");
+    });
+
+    it("el nombre que se enseña es el de ahora, no el del registro", async () => {
+      const luis = await register(`${randomUUID()}@arca.test`, "Luis");
+      const account = await openAccountNumber(luis.token);
+      const ana = await register();
+
+      await request(server)
+        .patch("/auth/name")
+        .set("Authorization", `Bearer ${luis.token}`)
+        .send({ name: "Luis Ferrer" })
+        .expect(200);
+
+      const response = await request(server)
+        .get(`/accounts/lookup?number=${account.number}`)
+        .set("Authorization", `Bearer ${ana.token}`)
+        .expect(200);
+
+      expect(response.body.name).toBe("Luis Ferrer");
     });
 
     it("acepta el número escrito de cualquier forma", async () => {
@@ -684,6 +830,428 @@ describe("API HTTP", () => {
         .expect(200);
 
       expect(after.body.balance).toBe("10000");
+    });
+  });
+
+  describe("cabeceras de seguridad", () => {
+    it("van en todas las respuestas, incluidas las que fallan", async () => {
+      const { token } = await register();
+
+      for (const response of [
+        await request(server).get("/accounts").set("Authorization", `Bearer ${token}`),
+        await request(server).get("/accounts"),
+      ]) {
+        expect(response.headers["x-content-type-options"]).toBe("nosniff");
+        expect(response.headers["referrer-policy"]).toBe("no-referrer");
+        expect(response.headers["x-frame-options"]).toBe("DENY");
+        expect(response.headers["strict-transport-security"]).toContain("max-age=63072000");
+
+        // La más estricta que hay: una API que devuelve JSON no carga nada.
+        expect(response.headers["content-security-policy"]).toContain("default-src 'none'");
+      }
+    });
+  });
+
+  describe("renombrar y cerrar cuentas", () => {
+    const rename = (token: string, accountId: string, name: string) =>
+      request(server)
+        .patch(`/accounts/${accountId}`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({ name });
+
+    const close = (token: string, accountId: string) =>
+      request(server)
+        .post(`/accounts/${accountId}/closure`)
+        .set("Authorization", `Bearer ${token}`);
+
+    const reopen = (token: string, accountId: string) =>
+      request(server)
+        .delete(`/accounts/${accountId}/closure`)
+        .set("Authorization", `Bearer ${token}`);
+
+    it("se le puede cambiar el nombre, y el número no se mueve", async () => {
+      const { token } = await register();
+      const account = await openAccountNumber(token, "Cuenta corirente");
+
+      const response = await rename(token, account.id, "Cuenta corriente").expect(200);
+
+      expect(response.body.name).toBe("Cuenta corriente");
+      expect(response.body.number).toBe(account.number);
+    });
+
+    it("renombrar la de otro es el mismo 404 que una que no existe", async () => {
+      const luis = await register();
+      const theirs = await openAccount(luis.token);
+      const ana = await register();
+
+      const ajena = await rename(ana.token, theirs, "Mía ahora").expect(404);
+      const inventada = await rename(ana.token, randomUUID(), "Mía ahora").expect(404);
+
+      expect(ajena.body).toEqual(inventada.body);
+    });
+
+    it("un nombre en blanco no vale", async () => {
+      const { token } = await register();
+      const accountId = await openAccount(token);
+
+      await rename(token, accountId, "   ").expect(400);
+    });
+
+    it("una cuenta a cero se cierra, y deja constancia de cuándo", async () => {
+      const { token } = await register();
+      const accountId = await openAccount(token);
+
+      const response = await close(token, accountId).expect(200);
+
+      expect(response.body.closedAt).toEqual(expect.any(String));
+    });
+
+    /**
+     * La regla que hace que cerrar signifique algo.
+     *
+     * Cerrar con dinero dentro sería esconderlo: la cuenta sale de las que se
+     * pueden usar y el saldo se queda ahí sin que nadie haya dicho a dónde iba.
+     */
+    it("una cuenta con dinero no se cierra, y el mensaje dice cuánto", async () => {
+      const { token } = await register();
+      const accountId = await openAccount(token);
+      await deposit(token, accountId, "2500").expect(201);
+
+      const response = await close(token, accountId).expect(409);
+
+      expect(response.body.message).toContain("$25.00");
+    });
+
+    it("cerrada no manda dinero", async () => {
+      const ana = await register();
+      const anaAccount = await openAccountNumber(ana.token);
+      const luis = await register();
+      const luisAccount = await openAccountNumber(luis.token);
+      await close(ana.token, anaAccount.id).expect(200);
+
+      await request(server)
+        .post("/transfers")
+        .set("Authorization", `Bearer ${ana.token}`)
+        .send({
+          fromAccountId: anaAccount.id,
+          toAccountNumber: luisAccount.number,
+          amount: "100",
+        })
+        .expect(409);
+    });
+
+    it("cerrada tampoco recibe, ni se resuelve su número", async () => {
+      const ana = await register();
+      const anaAccount = await openAccountNumber(ana.token);
+      await deposit(ana.token, anaAccount.id, "10000").expect(201);
+
+      const luis = await register();
+      const luisAccount = await openAccountNumber(luis.token);
+      await close(luis.token, luisAccount.id).expect(200);
+
+      // Para quien va a mandar, una cerrada contesta como una que no existe.
+      await request(server)
+        .get(`/accounts/lookup?number=${luisAccount.number}`)
+        .set("Authorization", `Bearer ${ana.token}`)
+        .expect(404);
+
+      await request(server)
+        .post("/transfers")
+        .set("Authorization", `Bearer ${ana.token}`)
+        .send({
+          fromAccountId: anaAccount.id,
+          toAccountNumber: luisAccount.number,
+          amount: "2500",
+        })
+        .expect(404);
+    });
+
+    it("cerrada no admite ingresos", async () => {
+      const { token } = await register();
+      const accountId = await openAccount(token);
+      await close(token, accountId).expect(200);
+
+      await deposit(token, accountId, "2500").expect(409);
+    });
+
+    /** Cerrar no borra: el extracto es el histórico y se sigue leyendo entero. */
+    it("cerrada conserva su extracto y su saldo", async () => {
+      const ana = await register();
+      const anaAccount = await openAccountNumber(ana.token);
+      await deposit(ana.token, anaAccount.id, "5000").expect(201);
+
+      const luis = await register();
+      const luisAccount = await openAccountNumber(luis.token);
+
+      await request(server)
+        .post("/transfers")
+        .set("Authorization", `Bearer ${ana.token}`)
+        .send({
+          fromAccountId: anaAccount.id,
+          toAccountNumber: luisAccount.number,
+          amount: "5000",
+        })
+        .expect(201);
+
+      await close(ana.token, anaAccount.id).expect(200);
+
+      const statement = await request(server)
+        .get(`/accounts/${anaAccount.id}/statement`)
+        .set("Authorization", `Bearer ${ana.token}`)
+        .expect(200);
+
+      expect(statement.body.lines).toHaveLength(2);
+    });
+
+    it("se reabre, y vuelve a servir", async () => {
+      const { token } = await register();
+      const accountId = await openAccount(token);
+      await close(token, accountId).expect(200);
+
+      const response = await reopen(token, accountId).expect(200);
+
+      expect(response.body.closedAt).toBeNull();
+      await deposit(token, accountId, "2500").expect(201);
+    });
+
+    it("cerrar dos veces no mueve la fecha", async () => {
+      const { token } = await register();
+      const accountId = await openAccount(token);
+
+      const first = await close(token, accountId).expect(200);
+      const second = await close(token, accountId).expect(200);
+
+      expect(second.body.closedAt).toBe(first.body.closedAt);
+    });
+
+    it("cerrar la de otro es el mismo 404 que una que no existe", async () => {
+      const luis = await register();
+      const theirs = await openAccount(luis.token);
+      const ana = await register();
+
+      const ajena = await close(ana.token, theirs).expect(404);
+      const inventada = await close(ana.token, randomUUID()).expect(404);
+
+      expect(ajena.body).toEqual(inventada.body);
+
+      // Y sigue abierta, claro.
+      await deposit(luis.token, theirs, "100").expect(201);
+    });
+
+    it("la cerrada sigue en la lista, marcada", async () => {
+      const { token } = await register();
+      const accountId = await openAccount(token, "Vieja");
+      await close(token, accountId).expect(200);
+
+      const response = await request(server)
+        .get("/accounts")
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+
+      const listed = (response.body.accounts as { id: string; closedAt: string | null }[]).find(
+        (account) => account.id === accountId,
+      );
+
+      expect(listed?.closedAt).toEqual(expect.any(String));
+    });
+
+    /**
+     * Cerrar detiene lo que empiezas, no lo que vuelve.
+     *
+     * Una anulación corrige el pasado. Si cerrar la bloqueara, quien recibió un
+     * cobro por error podría cerrar su cuenta para no tener que devolverlo — y
+     * el dinero de otro se quedaría atrapado por decisión de quien lo cobró.
+     */
+    it("una anulación sí entra en una cuenta cerrada", async () => {
+      const ana = await register();
+      const anaAccount = await openAccountNumber(ana.token);
+      await deposit(ana.token, anaAccount.id, "5000").expect(201);
+
+      const luis = await register();
+      const luisAccount = await openAccountNumber(luis.token);
+
+      const sent = await request(server)
+        .post("/transfers")
+        .set("Authorization", `Bearer ${ana.token}`)
+        .send({
+          fromAccountId: anaAccount.id,
+          toAccountNumber: luisAccount.number,
+          amount: "5000",
+        })
+        .expect(201);
+
+      // Ana se queda a cero y cierra. Luis devuelve lo que le llegó.
+      await close(ana.token, anaAccount.id).expect(200);
+
+      await request(server)
+        .post(`/transactions/${sent.body.id as string}/reversal`)
+        .set("Authorization", `Bearer ${luis.token}`)
+        .expect(201);
+
+      const after = await request(server)
+        .get(`/accounts/${anaAccount.id}`)
+        .set("Authorization", `Bearer ${ana.token}`)
+        .expect(200);
+
+      expect(after.body.balance).toBe("5000");
+      expect(after.body.closedAt).toEqual(expect.any(String));
+    });
+  });
+
+  describe("anular", () => {
+    /** Deja a Luis con 2.500 que le mandó Ana, y devuelve el id del movimiento. */
+    const transferBetween = async () => {
+      const ana = await register();
+      const luis = await register();
+      const anaAccount = await openAccountNumber(ana.token);
+      const luisAccount = await openAccountNumber(luis.token);
+      await deposit(ana.token, anaAccount.id, "10000").expect(201);
+
+      const response = await request(server)
+        .post("/transfers")
+        .set("Authorization", `Bearer ${ana.token}`)
+        .send({
+          fromAccountId: anaAccount.id,
+          toAccountNumber: luisAccount.number,
+          amount: "2500",
+        })
+        .expect(201);
+
+      return { ana, luis, anaAccount, luisAccount, transactionId: response.body.id as string };
+    };
+
+    const reverse = (token: string, transactionId: string) =>
+      request(server)
+        .post(`/transactions/${transactionId}/reversal`)
+        .set("Authorization", `Bearer ${token}`);
+
+    const balanceOf = async (token: string, accountId: string) => {
+      const response = await request(server)
+        .get(`/accounts/${accountId}/balance`)
+        .set("Authorization", `Bearer ${token}`)
+        .expect(200);
+
+      return response.body.balance as string;
+    };
+
+    it("quien recibió devuelve el dinero, y los dos saldos vuelven a su sitio", async () => {
+      const { ana, luis, anaAccount, luisAccount, transactionId } = await transferBetween();
+
+      const response = await reverse(luis.token, transactionId).expect(201);
+
+      expect(response.body.reversesId).toBe(transactionId);
+      expect(await balanceOf(ana.token, anaAccount.id)).toBe("10000");
+      expect(await balanceOf(luis.token, luisAccount.id)).toBe("0");
+    });
+
+    /**
+     * El control de seguridad de esta ruta.
+     *
+     * Si quien envía pudiera anular, el libro serviría para robar: pagas, te
+     * llevas la mercancía y te vuelves a llevar el dinero.
+     */
+    it("quien envió no puede recuperarlo, y no se entera de que existe", async () => {
+      const { ana, luis, anaAccount, luisAccount, transactionId } = await transferBetween();
+
+      const response = await reverse(ana.token, transactionId).expect(404);
+
+      // El mismo cuerpo que si no existiera: no confirma que haya nada ahí.
+      expect(JSON.stringify(response.body)).not.toContain("NotYourTransaction");
+      expect(await balanceOf(ana.token, anaAccount.id)).toBe("7500");
+      expect(await balanceOf(luis.token, luisAccount.id)).toBe("2500");
+    });
+
+    it("un desconocido tampoco, aunque acierte el identificador", async () => {
+      const { luis, luisAccount, transactionId } = await transferBetween();
+      const nadie = await register();
+
+      await reverse(nadie.token, transactionId).expect(404);
+
+      expect(await balanceOf(luis.token, luisAccount.id)).toBe("2500");
+    });
+
+    /**
+     * Anular es sacar dinero, así que pasa por la misma guarda que una
+     * transferencia. Sin ella, devolver lo ya gastado dejaría a Luis en
+     * descubierto y rompería la única regla que el libro promete.
+     */
+    it("no se puede devolver lo que ya se gastó", async () => {
+      const { luis, luisAccount, transactionId } = await transferBetween();
+      const otra = await openAccountNumber(luis.token, "Ahorro");
+
+      await request(server)
+        .post("/transfers")
+        .set("Authorization", `Bearer ${luis.token}`)
+        .send({
+          fromAccountId: luisAccount.id,
+          toAccountNumber: otra.number,
+          amount: "2500",
+        })
+        .expect(201);
+
+      await reverse(luis.token, transactionId).expect(409);
+
+      expect(await balanceOf(luis.token, luisAccount.id)).toBe("0");
+    });
+
+    it("dos veces no: la segunda es un conflicto y no mueve nada", async () => {
+      const { luis, luisAccount, transactionId } = await transferBetween();
+
+      await reverse(luis.token, transactionId).expect(201);
+      await reverse(luis.token, transactionId).expect(409);
+
+      expect(await balanceOf(luis.token, luisAccount.id)).toBe("0");
+    });
+
+    it("un ingreso lo anula su dueño, que es quien lo recibió", async () => {
+      const { token } = await register();
+      const account = await openAccount(token);
+      const response = await deposit(token, account, "5000").expect(201);
+
+      await reverse(token, response.body.id as string).expect(201);
+
+      expect(await balanceOf(token, account)).toBe("0");
+    });
+
+    /** Igual que con las cuentas: los dos 404 tienen que ser el mismo 404. */
+    it("un movimiento que no existe responde igual que uno que no es tuyo", async () => {
+      const { ana, transactionId } = await transferBetween();
+
+      const ajeno = await reverse(ana.token, transactionId).expect(404);
+      const inventado = await reverse(ana.token, randomUUID()).expect(404);
+
+      expect(ajeno.body).toEqual(inventado.body);
+      expect(JSON.stringify(ajeno.body)).not.toContain("NotYour");
+    });
+
+    it("un identificador que no es un uuid es un 400", async () => {
+      const { token } = await register();
+
+      await reverse(token, "no-soy-un-uuid").expect(400);
+    });
+
+    it("sin token no se anula nada", async () => {
+      const { luis, luisAccount, transactionId } = await transferBetween();
+
+      await request(server).post(`/transactions/${transactionId}/reversal`).expect(401);
+
+      expect(await balanceOf(luis.token, luisAccount.id)).toBe("2500");
+    });
+
+    it("la anulación aparece en el extracto marcada como tal", async () => {
+      const { luis, luisAccount, transactionId } = await transferBetween();
+      await reverse(luis.token, transactionId).expect(201);
+
+      const response = await request(server)
+        .get(`/accounts/${luisAccount.id}/statement`)
+        .set("Authorization", `Bearer ${luis.token}`)
+        .expect(200);
+
+      const lines = response.body.lines as { amount: string; isReversal: boolean }[];
+
+      expect(lines).toHaveLength(2);
+      expect(lines[0]).toMatchObject({ amount: "-2500", isReversal: true });
+      expect(lines[1]).toMatchObject({ amount: "2500", isReversal: false });
     });
   });
 
@@ -802,15 +1370,38 @@ describe("limitación de intentos", () => {
   let app: INestApplication;
   let server: Server;
 
-  beforeAll(async () => {
+  /**
+   * Una aplicación por test, y no una para todos.
+   *
+   * El contador vive en memoria y dura un minuto, así que un test que agota un
+   * cupo se lo deja agotado al siguiente: el segundo empezaría bloqueado y
+   * fallaría por un motivo que no es el suyo. Levantarla de nuevo es lo que
+   * pone el contador a cero.
+   */
+  beforeEach(async () => {
     app = await createTestingApp({ throttle: true });
     await truncateAll(app.get(PrismaService));
     server = app.getHttpServer() as Server;
   });
 
-  afterAll(async () => {
+  afterEach(async () => {
     await app.close();
   });
+
+  const enter = async (email: string) => {
+    const response = await request(server)
+      .post("/auth/register")
+      .send({ name: NAME, email, password: PASSWORD })
+      .expect(201);
+
+    return response.body.token as string;
+  };
+
+  const wrongPassword = (token: string) =>
+    request(server)
+      .patch("/auth/password")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ currentPassword: "no-es-esta-contraseña", newPassword: "otra-bastante-larga" });
 
   it("corta los intentos de inicio de sesión a ciegas", async () => {
     const credentials = { email: "nadie@arca.test", password: PASSWORD };
@@ -820,6 +1411,67 @@ describe("limitación de intentos", () => {
       await request(server).post("/auth/login").send(credentials).expect(401);
     }
 
-    await request(server).post("/auth/login").send(credentials).expect(429);
+    const blocked = await request(server).post("/auth/login").send(credentials).expect(429);
+
+    // Con la forma de siempre y en castellano, no la cadena que arma la
+    // librería con el nombre de su propia clase dentro.
+    expect(blocked.body.error).toBe("TooManyRequestsError");
+    expect(blocked.body.message).not.toContain("Throttler");
+
+    // Y diciendo cuánto hay que esperar, que es lo que convierte un «no» en
+    // algo con lo que un cliente puede hacer algo.
+    expect(Number(blocked.headers["retry-after"])).toBeGreaterThan(0);
+  });
+
+  /**
+   * El cupo es de cada persona, no de cada dirección.
+   *
+   * Contar por IP castiga a quien no ha hecho nada: detrás de un NAT —una
+   * oficina, un operador móvil— cientos comparten dirección, así que basta con
+   * que una agote el cupo para dejar fuera a las demás. Las dos peticiones de
+   * este test salen de la misma IP y llevan sesiones distintas.
+   */
+  it("el cupo lo gasta cada persona por su cuenta", async () => {
+    const ana = await enter("ana-limite@arca.test");
+    const luis = await enter("luis-limite@arca.test");
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await wrongPassword(ana).expect(403);
+    }
+
+    await wrongPassword(ana).expect(429);
+
+    // Luis no ha gastado nada suyo, aunque venga de la misma dirección.
+    await wrongPassword(luis).expect(403);
+  });
+
+  /**
+   * Y un token inventado no estrena cupo.
+   *
+   * Si el identificador se leyera del token sin comprobar la firma, bastaría
+   * con escribir un `sub` distinto en cada intento para no agotar nunca nada, y
+   * el limitador entero sobraría. Verificado, un token falso no identifica a
+   * nadie y se cae al cubo de la IP.
+   */
+  it("un token falsificado no da cupo nuevo", async () => {
+    const credentials = { email: "tampoco@arca.test", password: PASSWORD };
+    const forged = (sub: string) =>
+      `${Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url")}.${Buffer.from(
+        JSON.stringify({ sub, ver: 0, exp: Math.floor(Date.now() / 1000) + 3600 }),
+      ).toString("base64url")}.firma-inventada`;
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await request(server)
+        .post("/auth/login")
+        .set("Authorization", `Bearer ${forged(randomUUID())}`)
+        .send(credentials)
+        .expect(401);
+    }
+
+    await request(server)
+      .post("/auth/login")
+      .set("Authorization", `Bearer ${forged(randomUUID())}`)
+      .send(credentials)
+      .expect(429);
   });
 });

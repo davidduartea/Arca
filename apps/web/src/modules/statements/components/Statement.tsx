@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 
 import { EmptyState } from "@/components/EmptyState";
 import { Notice } from "@/components/Notice";
@@ -11,6 +12,7 @@ import type { StatementLineView } from "@/models/statements/StatementLineView";
 import type { StatementPageView } from "@/models/statements/StatementPageView";
 import { getStatement } from "@/modules/statements/actions";
 import { formatDay, formatMoment } from "@/modules/statements/date";
+import { reverseTransaction } from "@/modules/transfers/actions";
 import { button } from "@/styles/button";
 
 /** La cabecera de la tabla: filete grueso debajo, versalitas muy espaciadas. */
@@ -60,6 +62,32 @@ export function Statement({
   const [cursor, setCursor] = useState(firstPage.nextCursor);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
+
+  /**
+   * Cuando el servidor manda una primera página nueva, lo cargado se tira.
+   *
+   * Pasa al anular: la acción invalida la ruta y `router.refresh()` vuelve a
+   * pintar la pantalla desde el servidor. Sin esto, `useState` se quedaría con
+   * las líneas del primer render para siempre y la anulación no aparecería —
+   * el saldo de la cabecera cambiaría delante de una lista que sigue diciendo
+   * lo de antes, que es peor que no refrescar nada.
+   *
+   * Se descartan también las páginas que se hubieran cargado con «Cargar más»,
+   * y es lo correcto: sus saldos corrientes se calcularon contando desde una
+   * primera página que ya no es cierta.
+   *
+   * Va en el cuerpo del render y no en un efecto a propósito. Es el patrón que
+   * React documenta para ajustar estado cuando cambia una propiedad: así se
+   * corrige antes de pintar, en vez de pintar mal y volver a pintar.
+   */
+  const [rendered, setRendered] = useState(firstPage);
+
+  if (rendered !== firstPage) {
+    setRendered(firstPage);
+    setLines(firstPage.lines);
+    setCursor(firstPage.nextCursor);
+    setFailed(false);
+  }
 
   async function loadMore() {
     if (!cursor || loading) return;
@@ -111,7 +139,7 @@ export function Statement({
         </thead>
         <tbody className="block nav:table-row-group">
           {lines.map((line) => (
-            <Row key={line.entryId} line={line} />
+            <Row key={line.entryId} line={line} accountId={accountId} />
           ))}
         </tbody>
       </table>
@@ -157,8 +185,23 @@ export function Statement({
  * quedaba con 102 px de 338 y una frase corriente se partía en seis líneas.
  * Apilada se lleva el ancho entero.
  */
-function Row({ line }: { line: StatementLineView }) {
+function Row({ line, accountId }: { line: StatementLineView; accountId: string }) {
   const incoming = !line.amount.startsWith("-");
+
+  /**
+   * La anulación se marca en las **dos** líneas: la que corrige y la corregida.
+   * Son las dos mitades de una misma enmienda y se leen juntas o no se leen.
+   */
+  const amended = line.isReversal || line.isReversed;
+
+  /**
+   * Se devuelve lo que entró, y una sola vez.
+   *
+   * No se ofrece sobre una anulación: devolver una devolución es volver a
+   * mandar el dinero, y para eso está transferir. La API sí lo permitiría —
+   * quien lo recibió es su dueño— pero invitarlo desde aquí sólo confunde.
+   */
+  const returnable = incoming && !line.isReversed && !line.isReversal;
 
   return (
     <tr
@@ -176,7 +219,7 @@ function Row({ line }: { line: StatementLineView }) {
           exactamente los 3 px del filete más los 13 de la sangría, así que las
           cinco descripciones siguen cayendo en la misma vertical.
         */
-        line.isReversal &&
+        amended &&
           "-ml-[16px] border-l-[3px] border-l-green pl-[13px] nav:ml-0 nav:border-l-0 nav:pl-0",
       )}
     >
@@ -192,18 +235,26 @@ function Row({ line }: { line: StatementLineView }) {
         className={join(
           CELL,
           "contents nav:pr-s4",
-          line.isReversal && "nav:border-l-[3px] nav:border-l-green nav:pl-[10px]",
+          amended && "nav:border-l-[3px] nav:border-l-green nav:pl-[10px]",
         )}
       >
         <span
           className={join(
             "col-start-1 row-start-1 text-[15px] leading-[1.35] text-pretty nav:text-[14.5px]",
-            line.isReversal && "flex items-baseline gap-[7px]",
+            amended && "flex items-baseline gap-[7px]",
+            // Tachado y apagado: lo que se lee ahí ya no cuenta para el saldo.
+            // El tachón no va solo — lleva su rombo, su filete y la etiqueta de
+            // abajo, porque una raya encima de un texto la pierde quien tenga
+            // la vista justa.
+            line.isReversed && "text-ink-3 line-through",
           )}
         >
-          {line.isReversal && (
+          {amended && (
             <img
-              className="w-[18px] flex-none -translate-y-[2px] nav:w-[22px]"
+              className={join(
+                "w-[18px] flex-none -translate-y-[2px] nav:w-[22px]",
+                line.isReversed && "opacity-60",
+              )}
               src="/art/lozenge.svg"
               alt=""
               width={22}
@@ -222,13 +273,29 @@ function Row({ line }: { line: StatementLineView }) {
         </time>
 
         {/*
-          Apilada, la explicación no cabe pegada a la fecha: las dos juntas
-          pasan de los 338 px y empujarían al saldo fuera. Baja a una línea
-          suya, que es donde el diseño puso el enlace al asiento original.
+          La tercera línea, que cada fila usa para una cosa y sólo una: los tres
+          casos se excluyen entre sí. Una anulación explica qué es, lo anulado
+          lo lleva escrito, y lo que entró y sigue en pie ofrece devolverse.
         */}
         {line.isReversal && (
           <span className="col-start-1 col-end-3 row-start-3 font-mono text-[11px] text-ink-4 nav:hidden">
             {REVERSAL_NOTE}
+          </span>
+        )}
+
+        {line.isReversed && (
+          <span className="col-start-1 col-end-3 row-start-3 mt-[5px] inline-block w-fit border border-green/45 px-[6px] py-[1.5px] font-mono text-[9.5px] tracking-[0.14em] text-green uppercase">
+            Anulado
+          </span>
+        )}
+
+        {returnable && (
+          <span className="col-start-1 col-end-3 row-start-3 mt-[5px] block">
+            <Reverse
+              transactionId={line.transactionId}
+              accountId={accountId}
+              amount={line.amount}
+            />
           </span>
         )}
       </td>
@@ -257,6 +324,123 @@ function Row({ line }: { line: StatementLineView }) {
         {formatUsd(line.balance)}
       </td>
     </tr>
+  );
+}
+
+/** Un enlace de texto que en realidad es un botón: no navega, hace algo. */
+const TEXT_BUTTON =
+  "cursor-pointer border-b border-b-green/40 text-[11.5px] text-green hover:border-b-green";
+
+/**
+ * Devolver un movimiento, con la pregunta en el sitio del botón.
+ *
+ * Mismo principio que al cerrar todas las sesiones: **no hay capa flotante**.
+ * En este sistema no hay sombras, y un diálogo por encima de una fila de
+ * extracto obligaría a inventar una. La fila crece hacia abajo y empuja lo de
+ * debajo, que es lo que ya hace el menú del teléfono y la confirmación de la
+ * cuenta.
+ *
+ * A escala de fila la pregunta no lleva caja propia: el filete verde de la
+ * izquierda que ya marca la enmienda haría dos marcos concéntricos por una
+ * pregunta de una línea.
+ */
+function Reverse({
+  transactionId,
+  accountId,
+  amount,
+}: {
+  transactionId: string;
+  accountId: string;
+  amount: string;
+}) {
+  const [asking, setAsking] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const router = useRouter();
+  const question = useRef<HTMLParagraphElement>(null);
+
+  useEffect(() => {
+    // El botón que tenía el foco desaparece al preguntar. Sin mover el foco a
+    // la pregunta, quien navega con teclado se queda sin saber qué ha pasado.
+    if (asking) question.current?.focus();
+  }, [asking]);
+
+  async function confirm() {
+    setSending(true);
+    setProblem(null);
+
+    const result = await reverseTransaction(transactionId, accountId);
+
+    if ("error" in result) {
+      setProblem(result.error);
+      setSending(false);
+      return;
+    }
+
+    // Las líneas no se recomponen aquí: la acción ya invalidó la ruta y
+    // `refresh` trae el extracto rehecho por el servidor, con la anulación
+    // dentro y todos los saldos corrientes recalculados. Hacer esa cuenta en el
+    // navegador sería escribirla dos veces, y la del servidor es la buena.
+    //
+    // Al llegar esas líneas esta fila deja de poder devolverse y el botón
+    // desaparece con ella. Pero si algo saliera distinto de lo previsto, dejarlo
+    // en «Devolviendo…» para siempre sería mentir sobre lo que está pasando.
+    router.refresh();
+    setSending(false);
+  }
+
+  if (!asking) {
+    return (
+      <button
+        className={TEXT_BUTTON}
+        type="button"
+        onClick={() => {
+          setAsking(true);
+        }}
+      >
+        Devolver
+      </button>
+    );
+  }
+
+  return (
+    <span className="block">
+      <p className="text-[12.5px] outline-none" ref={question} tabIndex={-1}>
+        ¿Devolver {formatUsd(amount)}?{" "}
+        <span className="text-ink-3">
+          Se anula con otro asiento y los dos se quedan en el extracto.
+        </span>
+      </p>
+
+      <span className="mt-s2 flex flex-wrap items-center gap-s3">
+        <button
+          className={button({ tone: "primary", size: "tiny" })}
+          type="button"
+          onClick={() => void confirm()}
+          disabled={sending}
+        >
+          {sending ? "Devolviendo…" : "Sí, devolver"}
+        </button>
+
+        <button
+          className={TEXT_BUTTON}
+          type="button"
+          onClick={() => {
+            setAsking(false);
+            setProblem(null);
+          }}
+          disabled={sending}
+        >
+          Dejarlo
+        </button>
+      </span>
+
+      {problem !== null && (
+        <span className="mt-s2 block text-[11.5px] text-ink-2" role="alert">
+          {problem}
+        </span>
+      )}
+    </span>
   );
 }
 

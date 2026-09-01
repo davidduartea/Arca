@@ -18,7 +18,23 @@ const COPIED_MS = 2_000;
  * una acción, es un dato de la cuenta. En el panel no aparece: tres números
  * seguidos no se distinguen entre sí.
  */
-export function ReceiveBox({ number, accountName }: { number: string; accountName: string }) {
+export function ReceiveBox({
+  number,
+  accountName,
+  holderName,
+}: {
+  number: string;
+  accountName: string;
+
+  /**
+   * El nombre de quien la tiene, que es lo que ve la otra parte.
+   *
+   * No es el mismo dato que `accountName`, y confundirlos era el error de
+   * antes: el de la cuenta es una etiqueta privada —«Ahorro para el viaje»— y
+   * quien va a mandar dinero necesita saber a quién se lo manda.
+   */
+  holderName: string;
+}) {
   const [copied, setCopied] = useState(false);
   const [failed, setFailed] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -112,7 +128,16 @@ export function ReceiveBox({ number, accountName }: { number: string; accountNam
         mano es reimplementar tres cosas que el navegador ya hace bien.
       */}
       <dialog
-        className="w-[calc(100%-32px)] max-w-[400px] border border-green bg-paper p-0 text-ink backdrop:bg-ink/55"
+        /*
+          `m-auto` es lo que lo centra, y no sobra.
+
+          Un `<dialog>` abierto con `showModal()` se centra solo porque el
+          navegador le pone `inset: 0` y `margin: auto`. Tailwind reinicia el
+          margen de todo a cero en su capa base, así que se queda con `inset: 0`
+          y sin margen: pegado a la esquina de arriba a la izquierda. Se veía
+          así desde que existe esta caja.
+        */
+        className="m-auto w-[calc(100%-32px)] max-w-[400px] border border-green bg-paper p-0 text-ink backdrop:bg-ink/55"
         ref={dialog}
       >
         {/* Ver en grande: para dictar, o para enseñar la pantalla. */}
@@ -135,8 +160,14 @@ export function ReceiveBox({ number, accountName }: { number: string; accountNam
             <p className="mt-s2 mb-s1 font-mono text-[clamp(22px,6vw,28px)] tracking-[0.08em] tabular-nums">
               {formatAccountNumber(number)}
             </p>
+            {/*
+              Lo que ve la otra parte es el nombre de la persona, no el de la
+              cuenta. El de arriba está para que el dueño sepa cuál de las suyas
+              está enseñando; éste es el que sirve para confirmar.
+            */}
             <p className="text-[11.5px] leading-[1.5] text-ink-3">
-              Quien lo teclee verá este mismo nombre antes de confirmar.
+              Quien lo teclee verá <span className="text-ink">{holderName}</span> antes de
+              confirmar.
             </p>
 
             <button
