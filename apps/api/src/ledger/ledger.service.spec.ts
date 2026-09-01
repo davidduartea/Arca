@@ -48,7 +48,7 @@ describe("LedgerService", () => {
   });
 
   beforeEach(async () => {
-    await truncateAll(prisma);
+    await truncateAll();
 
     const owner = await createOwner(prisma);
     source = (await accounts.open({ ownerId: owner, name: "Origen" })).id;

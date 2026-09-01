@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import { PrismaService } from "../prisma/prisma.service";
 import { WORLD_ACCOUNT_ID } from "../shared/system-account";
-import { createTestingApp, truncateAll } from "../test/database";
+import { createTestingApp, schemaOwner, truncateAll } from "../test/database";
 
 const PASSWORD = "una-contraseña-larga";
 const NAME = "Ana Duarte";
@@ -35,7 +35,7 @@ describe("API HTTP", () => {
   });
 
   beforeEach(async () => {
-    await truncateAll(prisma);
+    await truncateAll();
   });
 
   const register = async (email = `${randomUUID()}@arca.test`, name = NAME) => {
@@ -405,7 +405,11 @@ describe("API HTTP", () => {
     it("un token de un usuario que ya no está no vale", async () => {
       const { token, userId } = await register();
 
-      await prisma.user.delete({ where: { id: userId } });
+      // Con la conexión de la dueña y no con la de la aplicación: el rol del
+      // libro no tiene DELETE sobre `users`, que es lo correcto — aquí nadie
+      // borra a nadie. Esto simula que la fila ya no está, no una operación
+      // que la aplicación deba poder hacer.
+      await schemaOwner().user.delete({ where: { id: userId } });
 
       await stillWorks(token).expect(401);
     });
@@ -1380,7 +1384,7 @@ describe("limitación de intentos", () => {
    */
   beforeEach(async () => {
     app = await createTestingApp({ throttle: true });
-    await truncateAll(app.get(PrismaService));
+    await truncateAll();
     server = app.getHttpServer() as Server;
   });
 

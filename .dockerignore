@@ -1,0 +1,30 @@
+# Lo que no debe entrar en el contexto de construcción.
+#
+# Importa más de lo que parece: Docker envía el contexto entero al demonio
+# antes de ejecutar la primera instrucción, así que un `node_modules` olvidado
+# convierte una construcción de segundos en una de minutos — y además tapa la
+# instalación limpia que hace el propio Dockerfile.
+
+**/node_modules
+**/dist
+**/.next
+**/coverage
+**/*.tsbuildinfo
+
+# Secretos. Nunca dentro de una imagen: quedan en el historial de capas aunque
+# un `RUN` posterior los borre.
+**/.env
+**/.env.*
+!**/.env.example
+
+.git
+.github
+
+# Documentación y herramientas que no participan en la construcción.
+docs
+probe
+README.md
+docker-compose.yml
+eslint.config.mjs
+.prettierrc.json
+.prettierignore

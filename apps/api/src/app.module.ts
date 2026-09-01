@@ -6,6 +6,7 @@ import { AccountsModule } from "./accounts/accounts.module";
 import { AuthModule } from "./auth/auth.module";
 import { JwtAuthGuard } from "./auth/jwt-auth.guard";
 import { TokenService } from "./auth/token.service";
+import { HealthModule } from "./health/health.module";
 import { DomainExceptionFilter } from "./http/domain-exception.filter";
 import { GLOBAL_RATE_LIMIT, RATE_LIMIT_MESSAGE, trackerFor } from "./http/rate-limit";
 import { LedgerModule } from "./ledger/ledger.module";
@@ -28,6 +29,7 @@ import { TransfersModule } from "./transfers/transfers.module";
     }),
     AccountsModule,
     AuthModule,
+    HealthModule,
     LedgerModule,
     StatementsModule,
     TransfersModule,

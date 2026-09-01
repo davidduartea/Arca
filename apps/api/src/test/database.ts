@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaClient } from "@prisma/client";
 import { Test } from "@nestjs/testing";
 import type { INestApplication } from "@nestjs/common";
 import type { TestingModule } from "@nestjs/testing";
@@ -12,10 +14,11 @@ import { JWT_SECRET } from "../auth/token.service";
 import { securityHeaders } from "../http/security-headers";
 import { LedgerModule } from "../ledger/ledger.module";
 import { DATABASE_URL, PrismaService } from "../prisma/prisma.service";
+import { READER_DATABASE_URL } from "../prisma/reader.service";
 import { SYSTEM_USER_ID, WORLD_ACCOUNT_ID } from "../shared/system-account";
 import { StatementsModule } from "../statements/statements.module";
 import { TransfersModule } from "../transfers/transfers.module";
-import { TEST_DATABASE_URL } from "./database-url";
+import { TEST_DATABASE_URL, TEST_LEDGER_URL, TEST_READER_URL } from "./database-url";
 
 /** Cualquier cosa larga sirve: los tests sólo necesitan firmar y verificar. */
 const TEST_JWT_SECRET = "secreto-de-pruebas-suficientemente-largo-para-el-esquema";
@@ -34,7 +37,9 @@ export async function createTestingModule(): Promise<TestingModule> {
     imports: [AccountsModule, AuditModule, LedgerModule, StatementsModule, TransfersModule],
   })
     .overrideProvider(DATABASE_URL)
-    .useValue(TEST_DATABASE_URL)
+    .useValue(TEST_LEDGER_URL)
+    .overrideProvider(READER_DATABASE_URL)
+    .useValue(TEST_READER_URL)
     .compile();
 
   await moduleRef.init();
@@ -52,7 +57,9 @@ export async function createTestingModule(): Promise<TestingModule> {
 export async function createTestingApp({ throttle = false } = {}): Promise<INestApplication> {
   const builder = Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(DATABASE_URL)
-    .useValue(TEST_DATABASE_URL)
+    .useValue(TEST_LEDGER_URL)
+    .overrideProvider(READER_DATABASE_URL)
+    .useValue(TEST_READER_URL)
     .overrideProvider(JWT_SECRET)
     .useValue(TEST_JWT_SECRET);
 
@@ -72,6 +79,28 @@ export async function createTestingApp({ throttle = false } = {}): Promise<INest
   return app;
 }
 
+/** Se abre una vez y se reutiliza; Vitest corre los archivos de uno en uno. */
+let owner: PrismaClient | undefined;
+
+/**
+ * La conexión que puede con todo, para lo que un test tiene que montar o
+ * deshacer y la aplicación no debe poder hacer nunca.
+ *
+ * Son tres cosas: vaciar tablas entre casos, borrar un usuario para simular que
+ * se fue, y quitar y poner triggers para comprobar que la auditoría se entera
+ * cuando la base deja de garantizar lo que garantizaba. Las tres son DDL o
+ * borrados, y **ninguno de los dos roles de la aplicación las tiene** — que es
+ * justo lo que se buscaba. Hace falta la dueña del esquema, la misma que aplica
+ * las migraciones, y por eso está aquí y no se le pide a `PrismaService`.
+ */
+export function schemaOwner(): PrismaClient {
+  owner ??= new PrismaClient({
+    adapter: new PrismaPg({ connectionString: TEST_DATABASE_URL }),
+  });
+
+  return owner;
+}
+
 /**
  * Deja la base como recién migrada.
  *
@@ -83,14 +112,14 @@ export async function createTestingApp({ throttle = false } = {}): Promise<INest
  * del sistema** que creó la migración. Volver a insertarlas aquí duplicaría esa
  * semilla en dos sitios que se pueden desincronizar.
  */
-export async function truncateAll(prisma: PrismaService): Promise<void> {
-  await prisma.$executeRawUnsafe(
+export async function truncateAll(): Promise<void> {
+  const db = schemaOwner();
+
+  await db.$executeRawUnsafe(
     'TRUNCATE TABLE "entries", "transactions" RESTART IDENTITY CASCADE',
   );
-  await prisma.$executeRawUnsafe(
-    `DELETE FROM "accounts" WHERE id <> '${WORLD_ACCOUNT_ID}'::uuid`,
-  );
-  await prisma.$executeRawUnsafe(`DELETE FROM "users" WHERE id <> '${SYSTEM_USER_ID}'::uuid`);
+  await db.$executeRawUnsafe(`DELETE FROM "accounts" WHERE id <> '${WORLD_ACCOUNT_ID}'::uuid`);
+  await db.$executeRawUnsafe(`DELETE FROM "users" WHERE id <> '${SYSTEM_USER_ID}'::uuid`);
 }
 
 /**

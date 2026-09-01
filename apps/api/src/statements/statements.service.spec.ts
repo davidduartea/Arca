@@ -21,6 +21,7 @@ describe("StatementsService", () => {
 
   let world: string;
   let ana: string;
+  let anaOwner: string;
 
   beforeAll(async () => {
     moduleRef = await createTestingModule();
@@ -35,12 +36,13 @@ describe("StatementsService", () => {
   });
 
   beforeEach(async () => {
-    await truncateAll(prisma);
+    await truncateAll();
 
     world = (
       await accounts.open({ ownerId: await createOwner(prisma), name: "Mundo", kind: "SYSTEM" })
     ).id;
-    ana = (await accounts.open({ ownerId: await createOwner(prisma), name: "Ana" })).id;
+    anaOwner = await createOwner(prisma);
+    ana = (await accounts.open({ ownerId: anaOwner, name: "Ana" })).id;
   });
 
   const deposit = (cents: bigint, description = `Ingreso de ${cents}`) =>
@@ -59,7 +61,7 @@ describe("StatementsService", () => {
     let rounds = 0;
 
     do {
-      const page = await statements.statement(accountId, { cursor, limit });
+      const page = await statements.statement(anaOwner, accountId, { cursor, limit });
       all.push(...page.lines);
       cursor = page.nextCursor ?? undefined;
 
@@ -71,7 +73,7 @@ describe("StatementsService", () => {
 
   describe("statement", () => {
     it("una cuenta sin movimientos da un extracto vacío", async () => {
-      const page = await statements.statement(ana);
+      const page = await statements.statement(anaOwner, ana);
 
       expect(page.lines).toEqual([]);
       expect(page.nextCursor).toBeNull();
@@ -81,7 +83,7 @@ describe("StatementsService", () => {
       await deposit(5_000n);
       await deposit(3_000n);
 
-      const page = await statements.statement(ana);
+      const page = await statements.statement(anaOwner, ana);
 
       expect(page.lines[0]?.balance).toBe(8_000n);
       expect(page.lines[0]?.balance).toBe(await ledger.balanceOf(ana));
@@ -92,7 +94,7 @@ describe("StatementsService", () => {
       await waitATick();
       await deposit(3_000n, "El segundo");
 
-      const page = await statements.statement(ana);
+      const page = await statements.statement(anaOwner, ana);
 
       expect(page.lines.map((line) => line.description)).toEqual(["El segundo", "El primero"]);
     });
@@ -104,7 +106,7 @@ describe("StatementsService", () => {
       await waitATick();
       await deposit(2_000n);
 
-      const page = await statements.statement(ana);
+      const page = await statements.statement(anaOwner, ana);
 
       // Leído de arriba abajo es la historia hacia atrás: 10.000, 8.000, 5.000.
       expect(page.lines.map((line) => line.balance)).toEqual([10_000n, 8_000n, 5_000n]);
@@ -169,7 +171,7 @@ describe("StatementsService", () => {
     it("la última página no trae cursor", async () => {
       await deposit(5_000n);
 
-      const page = await statements.statement(ana, { limit: 10 });
+      const page = await statements.statement(anaOwner, ana, { limit: 10 });
 
       expect(page.lines).toHaveLength(1);
       expect(page.nextCursor).toBeNull();
@@ -179,7 +181,7 @@ describe("StatementsService", () => {
       await deposit(5_000n);
       await deposit(3_000n);
 
-      const page = await statements.statement(ana, { limit: 1 });
+      const page = await statements.statement(anaOwner, ana, { limit: 1 });
 
       expect(page.lines).toHaveLength(1);
       expect(page.nextCursor).not.toBeNull();
@@ -190,31 +192,37 @@ describe("StatementsService", () => {
 
       // Pedir mil es decir «dame todo lo que puedas»; devolver cien responde a
       // esa intención sin fallar.
-      await expect(statements.statement(ana, { limit: 1_000 })).resolves.toBeDefined();
+      await expect(
+        statements.statement(anaOwner, ana, { limit: 1_000 }),
+      ).resolves.toBeDefined();
     });
 
     it("rechaza un tamaño de página imposible", async () => {
       // Cero o media línea no es una intención, es un fallo de quien llama.
-      await expect(statements.statement(ana, { limit: 0 })).rejects.toThrow(
+      await expect(statements.statement(anaOwner, ana, { limit: 0 })).rejects.toThrow(
         InvalidPageSizeError,
       );
-      await expect(statements.statement(ana, { limit: -5 })).rejects.toThrow(
+      await expect(statements.statement(anaOwner, ana, { limit: -5 })).rejects.toThrow(
         InvalidPageSizeError,
       );
-      await expect(statements.statement(ana, { limit: 2.5 })).rejects.toThrow(
+      await expect(statements.statement(anaOwner, ana, { limit: 2.5 })).rejects.toThrow(
         InvalidPageSizeError,
       );
     });
 
     it("rechaza un cursor que no es de los nuestros", async () => {
-      await expect(statements.statement(ana, { cursor: "basura" })).rejects.toThrow(
+      await expect(statements.statement(anaOwner, ana, { cursor: "basura" })).rejects.toThrow(
         InvalidCursorError,
       );
     });
 
     it("rechaza una cuenta que no existe", async () => {
-      await expect(statements.statement(randomUUID())).rejects.toThrow(UnknownAccountError);
-      await expect(statements.statement("no-soy-un-uuid")).rejects.toThrow(UnknownAccountError);
+      await expect(statements.statement(anaOwner, randomUUID())).rejects.toThrow(
+        UnknownAccountError,
+      );
+      await expect(statements.statement(anaOwner, "no-soy-un-uuid")).rejects.toThrow(
+        UnknownAccountError,
+      );
     });
 
     it("marca las líneas que corrigen a otro movimiento", async () => {
@@ -222,7 +230,7 @@ describe("StatementsService", () => {
       await waitATick();
       await ledger.reverse(posted.id);
 
-      const page = await statements.statement(ana);
+      const page = await statements.statement(anaOwner, ana);
 
       expect(page.lines.map((line) => line.isReversal)).toEqual([true, false]);
       expect(page.lines[0]?.balance).toBe(0n);
@@ -236,22 +244,22 @@ describe("StatementsService", () => {
       await waitATick();
       await deposit(3_000n);
 
-      expect(await statements.balanceAt(ana, before)).toBe(5_000n);
-      expect(await statements.balanceAt(ana, new Date())).toBe(8_000n);
+      expect(await statements.balanceAt(anaOwner, ana, before)).toBe(5_000n);
+      expect(await statements.balanceAt(anaOwner, ana, new Date())).toBe(8_000n);
     });
 
     it("antes del primer movimiento la cuenta estaba a cero", async () => {
       await deposit(5_000n);
 
-      expect(await statements.balanceAt(ana, new Date("2020-01-01"))).toBe(0n);
+      expect(await statements.balanceAt(anaOwner, ana, new Date("2020-01-01"))).toBe(0n);
     });
 
     it("una cuenta sin movimientos vale cero en cualquier fecha", async () => {
-      expect(await statements.balanceAt(ana, new Date())).toBe(0n);
+      expect(await statements.balanceAt(anaOwner, ana, new Date())).toBe(0n);
     });
 
     it("rechaza una cuenta que no existe", async () => {
-      await expect(statements.balanceAt(randomUUID(), new Date())).rejects.toThrow(
+      await expect(statements.balanceAt(anaOwner, randomUUID(), new Date())).rejects.toThrow(
         UnknownAccountError,
       );
     });
@@ -259,7 +267,7 @@ describe("StatementsService", () => {
 
   /** La fecha del asiento más reciente de Ana, leída de la propia base. */
   const lastEntryDate = async (): Promise<Date> => {
-    const page = await statements.statement(ana, { limit: 1 });
+    const page = await statements.statement(anaOwner, ana, { limit: 1 });
     const line = page.lines[0];
     if (!line) throw new Error("No hay movimientos de los que leer la fecha");
 

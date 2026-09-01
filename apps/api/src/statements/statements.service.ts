@@ -2,7 +2,8 @@ import { Injectable } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 
 import { UnknownAccountError } from "../ledger/ledger.errors";
-import { PrismaService } from "../prisma/prisma.service";
+import type { ReadOnlyClient } from "../prisma/reader.service";
+import { ReaderService } from "../prisma/reader.service";
 import { isUuid } from "../shared/uuid";
 import type { StatementCursor } from "./cursor";
 import { decodeCursor, encodeCursor } from "./cursor";
@@ -51,7 +52,7 @@ interface EntryRow {
  */
 @Injectable()
 export class StatementsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly reader: ReaderService) {}
 
   /**
    * Una página del extracto, del movimiento más reciente al más antiguo.
@@ -59,41 +60,59 @@ export class StatementsService {
    * Cada línea lleva el saldo de la cuenta **después** de ese asiento, que es
    * como se lee un extracto: la primera línea muestra el saldo actual y bajando
    * se recorre la historia hacia atrás.
+   *
+   * `ownerId` no está aquí para filtrar: filtrar ya lo hace la base. Está para
+   * poder decirle a Postgres **quién pregunta**, que es lo que las políticas
+   * necesitan saber. Si la cuenta fuera de otro, las consultas de dentro no
+   * devolverían filas — ni ésta ni ninguna, porque el rol con el que viajan no
+   * alcanza lo ajeno.
    */
-  async statement(accountId: string, query: StatementQuery = {}): Promise<StatementPage> {
-    await this.assertAccountExists(accountId);
+  async statement(
+    ownerId: string,
+    accountId: string,
+    query: StatementQuery = {},
+  ): Promise<StatementPage> {
+    if (!isUuid(accountId)) throw new UnknownAccountError(accountId);
 
     const size = clampPageSize(query.limit);
     const from = query.cursor === undefined ? null : decodeCursor(query.cursor);
 
-    // Se pide una fila de más. Si llega, hay siguiente página — y así se evita
-    // el `COUNT(*)` que casi todas las paginaciones hacen sin necesitarlo, que
-    // en una tabla grande cuesta más que la propia página.
-    const rows = await this.prisma.entry.findMany({
-      where: { accountId, ...before(from) },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      take: size + 1,
-      select: {
-        id: true,
-        transactionId: true,
-        amount: true,
-        createdAt: true,
-        transaction: {
-          select: { description: true, reversesId: true, reversedBy: { select: { id: true } } },
+    return this.reader.asUser(ownerId, async (db) => {
+      await assertAccountExists(db, accountId);
+
+      // Se pide una fila de más. Si llega, hay siguiente página — y así se evita
+      // el `COUNT(*)` que casi todas las paginaciones hacen sin necesitarlo, que
+      // en una tabla grande cuesta más que la propia página.
+      const rows = await db.entry.findMany({
+        where: { accountId, ...before(from) },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: size + 1,
+        select: {
+          id: true,
+          transactionId: true,
+          amount: true,
+          createdAt: true,
+          transaction: {
+            select: {
+              description: true,
+              reversesId: true,
+              reversedBy: { select: { id: true } },
+            },
+          },
         },
-      },
+      });
+
+      const hasMore = rows.length > size;
+      const page = hasMore ? rows.slice(0, size) : rows;
+
+      const first = page[0];
+      if (first === undefined) return { lines: [], nextCursor: null };
+
+      return {
+        lines: await this.toLines(db, accountId, page, first),
+        nextCursor: hasMore ? cursorOfLast(page) : null,
+      };
     });
-
-    const hasMore = rows.length > size;
-    const page = hasMore ? rows.slice(0, size) : rows;
-
-    const first = page[0];
-    if (first === undefined) return { lines: [], nextCursor: null };
-
-    return {
-      lines: await this.toLines(accountId, page, first),
-      nextCursor: hasMore ? cursorOfLast(page) : null,
-    };
   }
 
   /**
@@ -106,15 +125,19 @@ export class StatementsService {
    * más cercana anterior a la fecha pedida en vez de en el principio de los
    * tiempos. Mientras no haya volumen que lo justifique, esto es lo correcto.
    */
-  async balanceAt(accountId: string, at: Date): Promise<bigint> {
-    await this.assertAccountExists(accountId);
+  async balanceAt(ownerId: string, accountId: string, at: Date): Promise<bigint> {
+    if (!isUuid(accountId)) throw new UnknownAccountError(accountId);
 
-    const { _sum } = await this.prisma.entry.aggregate({
-      _sum: { amount: true },
-      where: { accountId, createdAt: { lte: at } },
+    return this.reader.asUser(ownerId, async (db) => {
+      await assertAccountExists(db, accountId);
+
+      const { _sum } = await db.entry.aggregate({
+        _sum: { amount: true },
+        where: { accountId, createdAt: { lte: at } },
+      });
+
+      return _sum.amount ?? 0n;
     });
-
-    return _sum.amount ?? 0n;
   }
 
   // ─── interior ──────────────────────────────────────────────────────────────
@@ -128,11 +151,12 @@ export class StatementsService {
    * hacia abajo: el saldo antes de un asiento es el de después menos su importe.
    */
   private async toLines(
+    db: ReadOnlyClient,
     accountId: string,
     page: EntryRow[],
     first: EntryRow,
   ): Promise<StatementLine[]> {
-    let balance = await this.balanceUpTo(accountId, first);
+    let balance = await balanceUpTo(db, accountId, first);
 
     return page.map((row) => {
       const line: StatementLine = {
@@ -151,32 +175,44 @@ export class StatementsService {
       return line;
     });
   }
+}
 
-  /** El saldo contando este asiento y todos los anteriores. */
-  private async balanceUpTo(accountId: string, upTo: StatementCursor): Promise<bigint> {
-    const { _sum } = await this.prisma.entry.aggregate({
-      _sum: { amount: true },
-      where: {
-        accountId,
-        OR: [
-          { createdAt: { lt: upTo.createdAt } },
-          { createdAt: upTo.createdAt, id: { lte: upTo.id } },
-        ],
-      },
-    });
+/** El saldo contando este asiento y todos los anteriores. */
+async function balanceUpTo(
+  db: ReadOnlyClient,
+  accountId: string,
+  upTo: StatementCursor,
+): Promise<bigint> {
+  const { _sum } = await db.entry.aggregate({
+    _sum: { amount: true },
+    where: {
+      accountId,
+      OR: [
+        { createdAt: { lt: upTo.createdAt } },
+        { createdAt: upTo.createdAt, id: { lte: upTo.id } },
+      ],
+    },
+  });
 
-    return _sum.amount ?? 0n;
-  }
+  return _sum.amount ?? 0n;
+}
 
-  private async assertAccountExists(accountId: string): Promise<void> {
-    if (!isUuid(accountId)) throw new UnknownAccountError(accountId);
+/**
+ * ¿Existe la cuenta?
+ *
+ * Con el rol lector, «existe» quiere decir **existe y es tuya**: una cuenta
+ * ajena no devuelve fila, así que sale por aquí como si no existiera. Es
+ * exactamente la respuesta que ya daba la aplicación —el mismo 404 para «no
+ * existe» y para «no es tuya», para no dar un mapa a quien prueba
+ * identificadores—, sólo que ahora la da la base y no un `if`.
+ */
+async function assertAccountExists(db: ReadOnlyClient, accountId: string): Promise<void> {
+  const account = await db.account.findUnique({
+    where: { id: accountId },
+    select: { id: true },
+  });
 
-    const account = await this.prisma.account.findUnique({
-      where: { id: accountId },
-      select: { id: true },
-    });
-    if (!account) throw new UnknownAccountError(accountId);
-  }
+  if (!account) throw new UnknownAccountError(accountId);
 }
 
 /**

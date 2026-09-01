@@ -15,6 +15,7 @@
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "db:reset": "prisma migrate reset --force",
+    "db:roles": "node scripts/local-roles.mjs",
     "ledger:audit": "nest start --entryFile audit/audit.cli",
     "ledger:audit:built": "node dist/audit/audit.cli.js"
   },
@@ -27,6 +28,7 @@
     "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client": "^7.9.1",
     "pg": "^8.23.0",
+    "prisma": "^7.9.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "zod": "^4.4.3"
@@ -41,7 +43,6 @@
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.2.1",
     "@vitest/coverage-v8": "^4.1.11",
-    "prisma": "^7.9.1",
     "supertest": "^7.2.2",
     "typescript": "^5.9.3",
     "unplugin-swc": "^1.5.11",

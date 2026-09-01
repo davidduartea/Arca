@@ -18,6 +18,7 @@
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "db:migrate": "pnpm --filter @arca/api db:migrate",
+    "db:roles": "pnpm --filter @arca/api db:roles",
     "db:generate": "pnpm --filter @arca/api db:generate",
     "db:studio": "pnpm --filter @arca/api db:studio",
     "ledger:audit": "pnpm --filter @arca/api ledger:audit",

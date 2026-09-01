@@ -40,7 +40,7 @@ describe("TransfersService", () => {
   });
 
   beforeEach(async () => {
-    await truncateAll(prisma);
+    await truncateAll();
 
     const bank = await createOwner(prisma);
     world = (await accounts.open({ ownerId: bank, name: "Mundo exterior", kind: "SYSTEM" })).id;

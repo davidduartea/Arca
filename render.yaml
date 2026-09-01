@@ -1,0 +1,80 @@
+# Blueprint de Render para la API.
+#
+# Sólo la API vive aquí: la web va en Vercel y Postgres en Supabase. El porqué
+# de ese reparto, y las trampas de cada uno, en `docs/despliegue.md`.
+#
+# 📖 https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: arca-api
+    runtime: docker
+    plan: free
+
+    # La misma región que el proyecto de Supabase, y no da igual: cada consulta
+    # cruza esta distancia. Con la base en Ohio y la API en Fráncfort son más de
+    # 100 ms por consulta, y una transferencia hace varias dentro de la misma
+    # transacción, con la cuenta bloqueada mientras tanto.
+    region: ohio
+
+    # El Dockerfile está en `apps/api` pero se construye desde la RAÍZ del
+    # monorepo: necesita el lockfile y los manifiestos del espacio de trabajo,
+    # que quedan fuera de esa carpeta. Por eso `dockerContext` es `.` y no
+    # `./apps/api`. Apuntarlo a la carpeta del Dockerfile es el fallo que hace
+    # que la construcción muera buscando archivos que no ve.
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+
+    # Render espera a que esto responda antes de mandar tráfico. El contenedor
+    # aplica las migraciones antes de escuchar, así que el primer arranque tras
+    # una migración nueva tarda más que los siguientes.
+    #
+    # Es `/healthz` y no `/readyz` a propósito: esto reinicia el servicio cuando
+    # falla, y reiniciar no arregla una base caída — sólo alarga el corte.
+    healthCheckPath: /healthz
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # Uno, que es el balanceador de Render. De este número depende que la
+      # limitación de intentos cuente a quien llama y no a la nube entera: a
+      # cero, todo el mundo comparte la IP del proxy y se limitan unos a otros;
+      # de más, cualquiera falsifica la suya con una cabecera `X-Forwarded-For`
+      # y se salta el límite del acceso.
+      - key: TRUST_PROXY_HOPS
+        value: 1
+
+      # `sync: false` significa: no la pongas aquí, pregúntamela en el panel. Es
+      # lo que evita que un secreto acabe versionado en el repositorio.
+      #
+      # **Son TRES conexiones a la misma base, con tres usuarios distintos**, y
+      # ninguna sobra. Cada una lleva la autoridad que le corresponde:
+      #
+      #   DATABASE_URL         miembro de `arca_ledger` — mueve dinero. Ve el
+      #                        libro entero porque una transferencia toca la
+      #                        cuenta de otro; no puede reescribir un asiento.
+      #   READER_DATABASE_URL  miembro de `arca_reader` — sirve extractos y
+      #                        saldos. Sólo lee, y sólo lo del dueño que la
+      #                        petición anuncia; lo impone RLS.
+      #   DIRECT_URL           la dueña del esquema — sólo migra, al arrancar.
+      #
+      # Y además, dos puertos distintos: las dos primeras van por el pooler de
+      # transacciones (6543) y la tercera por el de sesión (5432), que es el
+      # único que admite el DDL de una migración. Cómo se crean los usuarios y
+      # por qué, en `docs/despliegue.md`.
+      - key: DATABASE_URL
+        sync: false
+      - key: READER_DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+
+# `PORT` no se declara: lo inyecta Render y el esquema de entorno lo lee.
+#
+# Tampoco hay nada parecido a un `WEB_ORIGIN`, y no es un olvido: del navegador
+# no sale ni una petición hacia esta API. Todo pasa por las acciones de servidor
+# de Next, así que quien llama es siempre otro servidor y CORS no entra en
+# juego. Abrir un origen aquí sería regalar superficie sin que nadie la use.

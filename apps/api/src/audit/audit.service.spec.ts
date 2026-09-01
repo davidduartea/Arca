@@ -3,8 +3,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { AccountsService } from "../accounts/accounts.service";
 import { LedgerService } from "../ledger/ledger.service";
+import { PrismaClient } from "@prisma/client";
+
 import { PrismaService } from "../prisma/prisma.service";
-import { createOwner, createTestingModule, truncateAll } from "../test/database";
+import { createOwner, createTestingModule, schemaOwner, truncateAll } from "../test/database";
 import { TransfersService } from "../transfers/transfers.service";
 import { AuditService } from "./audit.service";
 import type { AuditReport } from "./audit.types";
@@ -35,7 +37,7 @@ describe("AuditService", () => {
   });
 
   beforeEach(async () => {
-    await truncateAll(prisma);
+    await truncateAll();
 
     world = (
       await accounts.open({ ownerId: await createOwner(prisma), name: "Mundo", kind: "SYSTEM" })
@@ -195,7 +197,7 @@ describe("AuditService", () => {
    */
   describe("y no se fía de las restricciones que sí existen", () => {
     it("ve el descuadre si el trigger deja de estar", async () => {
-      await withoutTrigger(prisma, "entries_must_balance", async () => {
+      await withoutTrigger(schemaOwner(), "entries_must_balance", async () => {
         await prisma.transaction.create({
           data: {
             description: "Dinero de la nada",
@@ -219,7 +221,7 @@ describe("AuditService", () => {
     });
 
     it("ve la media partida si el trigger deja de estar", async () => {
-      await withoutTrigger(prisma, "entries_must_balance", async () => {
+      await withoutTrigger(schemaOwner(), "entries_must_balance", async () => {
         await prisma.transaction.create({
           data: {
             description: "Media partida",
@@ -232,7 +234,7 @@ describe("AuditService", () => {
     });
 
     it("ve el importe cero si el CHECK deja de estar", async () => {
-      await withoutCheck(prisma, "entries_amount_not_zero", "amount <> 0", async () => {
+      await withoutCheck(schemaOwner(), "entries_amount_not_zero", "amount <> 0", async () => {
         await prisma.$transaction(async (tx) => {
           await tx.transaction.create({
             data: {
@@ -264,7 +266,7 @@ describe("AuditService", () => {
  * inexplicables lejos de la causa.
  */
 async function withoutTrigger(
-  prisma: PrismaService,
+  prisma: PrismaClient,
   trigger: string,
   action: () => Promise<void>,
 ): Promise<void> {
@@ -287,7 +289,7 @@ async function withoutTrigger(
  * siguientes. El `beforeEach` se lleva las filas malas con un TRUNCATE.
  */
 async function withoutCheck(
-  prisma: PrismaService,
+  prisma: PrismaClient,
   constraint: string,
   definition: string,
   action: () => Promise<void>,

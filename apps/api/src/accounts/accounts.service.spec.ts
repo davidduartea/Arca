@@ -25,7 +25,7 @@ describe("AccountsService", () => {
   });
 
   beforeEach(async () => {
-    await truncateAll(prisma);
+    await truncateAll();
   });
 
   it("abre una cuenta de persona por defecto", async () => {

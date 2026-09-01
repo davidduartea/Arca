@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import { loadEnvironment } from "./environment";
 
 const MINIMUM = {
-  DATABASE_URL: "postgresql://arca:arca@localhost:5433/arca",
+  DATABASE_URL: "postgresql://arca_ledger:secreto@localhost:5433/arca",
+  READER_DATABASE_URL: "postgresql://arca_reader:secreto@localhost:5433/arca",
   JWT_SECRET: "un-secreto-suficientemente-largo-para-firmar",
 };
 
@@ -23,7 +24,12 @@ describe("loadEnvironment", () => {
     // Un secreto corto se rompe a fuerza bruta sin tocar el servidor: el
     // atacante ya tiene un token firmado con el que comparar.
     expect(() => loadEnvironment({ ...MINIMUM, JWT_SECRET: "corto" })).toThrow(/JWT_SECRET/);
-    expect(() => loadEnvironment({ DATABASE_URL: MINIMUM.DATABASE_URL })).toThrow(/JWT_SECRET/);
+    expect(() =>
+      loadEnvironment({
+        DATABASE_URL: MINIMUM.DATABASE_URL,
+        READER_DATABASE_URL: MINIMUM.READER_DATABASE_URL,
+      }),
+    ).toThrow(/JWT_SECRET/);
   });
 
   it("convierte el puerto, que llega como texto", () => {
@@ -35,9 +41,23 @@ describe("loadEnvironment", () => {
   });
 
   it("no acepta una cadena que no sea de Postgres", () => {
-    expect(() => loadEnvironment({ DATABASE_URL: "mysql://arca@localhost/arca" })).toThrow(
-      /PostgreSQL/,
-    );
+    expect(() =>
+      loadEnvironment({ ...MINIMUM, DATABASE_URL: "mysql://arca@localhost/arca" }),
+    ).toThrow(/PostgreSQL/);
+  });
+
+  /**
+   * La conexión del lector no tiene respaldo, y es a propósito.
+   *
+   * Si al faltar cayera sobre `DATABASE_URL`, olvidarse de ponerla daría una
+   * aplicación que arranca, responde igual y ha perdido la frontera entre leer
+   * lo tuyo y ver el libro entero — sin decírselo a nadie. La separación de
+   * roles entera se apoya en que esto falle.
+   */
+  it("no arranca sin la conexión del lector", () => {
+    const { READER_DATABASE_URL: _omitida, ...sinLector } = MINIMUM;
+
+    expect(() => loadEnvironment(sinLector)).toThrow(/READER_DATABASE_URL/);
   });
 
   it("no acepta un puerto imposible", () => {
