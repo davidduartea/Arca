@@ -1,15 +1,21 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { ApiError, api } from "@/lib/api";
 import { text } from "@/lib/form";
 import { clearSession, writeSession } from "@/lib/session";
 import { firstMessage, issuesByField } from "@/lib/validation";
-import { credentialsSchema, registrationSchema } from "@/models/auth/Credentials";
+import {
+  credentialsSchema,
+  nameChangeSchema,
+  registrationSchema,
+} from "@/models/auth/Credentials";
 import type { FormState } from "@/models/auth/FormState";
 import { passwordChangeSchema } from "@/models/auth/PasswordChange";
 import type { Session } from "@/models/auth/Session";
+import type { User } from "@/models/auth/User";
 
 /**
  * Todo lo que toca la sesión, en el servidor.
@@ -48,7 +54,10 @@ export async function signIn(_previous: FormState, form: FormData): Promise<Form
 }
 
 export async function signUp(_previous: FormState, form: FormData): Promise<FormState> {
-  const parsed = registrationSchema.safeParse(readCredentials(form));
+  const parsed = registrationSchema.safeParse({
+    ...readCredentials(form),
+    name: text(form, "name"),
+  });
 
   // Al registrarse sí se marca el campo: no hay ninguna cuenta de la que hablar
   // todavía, y quien está creando una necesita saber cuál de los dos arreglar.
@@ -105,6 +114,33 @@ export async function changePassword(_previous: FormState, form: FormData): Prom
   } catch (error) {
     return toPasswordFormState(error);
   }
+
+  return { ok: true };
+}
+
+/**
+ * Cambiar el nombre.
+ *
+ * No devuelve sesión nueva y no hace falta: el nombre no va firmado dentro del
+ * token, la API lo relee en cada petición. Lo que sí hay que hacer es invalidar
+ * las rutas que lo pintan — la barra lo enseña en todas.
+ */
+export async function changeName(_previous: FormState, form: FormData): Promise<FormState> {
+  const parsed = nameChangeSchema.safeParse({ name: text(form, "name") });
+
+  if (!parsed.success) {
+    return { error: "Revisa los datos.", issues: issuesByField(parsed.error) };
+  }
+
+  try {
+    await api<{ user: User }>("/auth/name", { method: "PATCH", body: parsed.data });
+  } catch (error) {
+    if (!(error instanceof ApiError)) return { error: OFFLINE };
+
+    return commonFailure(error);
+  }
+
+  revalidatePath("/", "layout");
 
   return { ok: true };
 }

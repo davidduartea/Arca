@@ -17,9 +17,13 @@ import { Statement } from "@/modules/statements/components/Statement";
 export function StatementScreen({
   account,
   firstPage,
+  holderName,
 }: {
   account: AccountView;
   firstPage: StatementPageView;
+
+  /** El nombre de quien mira, que es el que verá quien le transfiera. */
+  holderName: string;
 }) {
   const empty = firstPage.lines.length === 0;
 
@@ -51,7 +55,11 @@ export function StatementScreen({
           </p>
         </div>
 
-        <ReceiveBox number={account.number} accountName={account.name} />
+        <ReceiveBox
+          number={account.number}
+          accountName={account.name}
+          holderName={holderName}
+        />
       </div>
 
       {/* El filete adornado es de escritorio: en el teléfono no hay sitio que partir. */}

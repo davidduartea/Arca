@@ -26,10 +26,37 @@ export function SignUpForm() {
   const [typed, setTyped] = useState("");
 
   const hintId = useId();
+  const nameHintId = useId();
 
   return (
     <form className={authFormClass} action={act}>
       {state.error && <Notice>{state.error}</Notice>}
+
+      {/*
+        El nombre va primero, y no es orden alfabético: es lo único de esta
+        pantalla que verán otras personas. Quien teclee tu número de arca antes
+        de mandarte dinero lee esto para confirmar que eres tú.
+      */}
+      <div className={fieldClass}>
+        <label className={labelClass} htmlFor="name">
+          Tu nombre
+        </label>
+        <input
+          className={inputClass}
+          id="name"
+          name="name"
+          type="text"
+          autoComplete="name"
+          placeholder="Ana Duarte"
+          maxLength={80}
+          aria-describedby={nameHintId}
+          required
+        />
+        <span className={hintClass} id={nameHintId}>
+          Es lo que verá quien te transfiera, para confirmar que eres tú.
+        </span>
+        {state.issues?.["name"] && <span className={hintClass}>{state.issues["name"]}</span>}
+      </div>
 
       <div className={fieldClass}>
         <label className={labelClass} htmlFor="email">
