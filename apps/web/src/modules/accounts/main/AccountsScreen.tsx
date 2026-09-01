@@ -24,7 +24,19 @@ export function AccountsScreen({ accounts }: { accounts: AccountView[] }) {
             key={account.id}
             href={`/accounts/${account.id}`}
           >
-            <span className="text-[15px]">{account.name}</span>
+            <span className="text-[15px]">
+              {account.name}
+              {/*
+                Cerrada se queda en la lista, marcada. Esconderla sería esconder
+                su extracto, que es histórico y no un borrador; y su dueño
+                tiene que poder entrar a reabrirla.
+              */}
+              {account.closedAt !== null && (
+                <span className="ml-[7px] border border-rule px-[5px] py-[1px] font-mono text-[9.5px] tracking-[0.12em] text-ink-4 uppercase">
+                  Cerrada
+                </span>
+              )}
+            </span>
             {/*
               Saldo cero es un estado normal y se escribe $0.00, no «sin fondos»
               ni un hueco: la cuenta existe y su saldo es exacto.

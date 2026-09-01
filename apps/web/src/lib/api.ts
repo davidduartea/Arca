@@ -34,7 +34,7 @@ export class ApiError extends Error {
 }
 
 interface RequestOptions {
-  method?: "GET" | "POST" | "PATCH";
+  method?: "GET" | "POST" | "PATCH" | "DELETE";
   body?: unknown;
   /** Con sesión por defecto. Registro y acceso son los únicos sin ella. */
   anonymous?: boolean;
